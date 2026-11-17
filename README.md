@@ -197,9 +197,45 @@ git push
 | `535 Authentication failed` | Contraseña, o usuario sin `@lab.test` |
 | Tras reiniciar el PC, el contenedor puede salir | La regla de iptables se pierde: volver a ejecutar `bloquear-salida.sh` |
 
-## Fase siguiente: seguridad (pendiente)
+## Fase siguiente: seguridad (diseño acordado, sin implementar)
 
-- DNS local (`dns/`) con `mail.lab.test`, SPF, DKIM y DMARC para `lab.test`.
-- Rspamd: firma DKIM, verificación DMARC y filtro de spam.
-- Demostración de suplantación por el puerto 25 antes y después de DMARC.
-- Filtro de adjuntos peligrosos (`mime_header_checks`).
+Objetivo: autenticar el dominio `lab.test` (SPF, DKIM, DMARC), filtrar spam y adjuntos
+peligrosos, y demostrar la suplantación por el puerto 25 antes y después de DMARC.
+La fase actual ya cubre TLS obligatorio, AUTH solo tras TLS y antisuplantación del sobre (C2);
+esta fase cubre la cabecera `From:` visible, que C2 no protege.
+
+### Decisiones
+
+| # | Tema | Decisión | Motivo |
+|---|---|---|---|
+| 1 | Resolución DNS | Contenedor DNS **solo para el servidor**; los clientes siguen con `/etc/hosts` | Rspamd necesita consultar registros TXT; `/etc/hosts` no los sirve |
+| 2 | Servidor DNS | **bind9** (Debian 12) con archivo de zona `lab.test`, IP `172.30.53.53` | Formato estándar y explicable; dentro de la subred, `bloquear-salida.sh` no lo afecta |
+| 3 | Rspamd | **Contenedor aparte** (Debian 12), IP `172.30.53.11`, milter `inet:172.30.53.11:11332`. Sin Redis | No modifica la imagen de correo ya validada; Redis solo hace falta para Bayes y reportes |
+| 4 | Puerto 25 | **Publicado siempre** en `LAB_IP`, con `ufw` limitado a la IP del PC 2 | La demo necesita el puerto abierto antes y después de DMARC; superficie mínima |
+| 5 | DMARC | `v=DMARC1; p=reject; adkim=s; aspf=s` **sin `rua=`** | El `550` se ve en la sesión SMTP y en la captura; sin salida a Internet no hay reportes |
+| 6 | SPF | `v=spf1 ip4:<LAB_IP> -all` | `-all` da `fail` duro; `~all` deja la demo ambigua |
+| 7 | DKIM | **RSA 2048**, selector `taller3`, clave en `secrets/dkim/` (fuera de Git) | 1024 es débil; Ed25519 tiene soporte desigual |
+| 8 | Evidencia DKIM | Pasar el mensaje por `rspamc` → `DKIM_VALID`; alterar el cuerpo → `DKIM_REJECT` | El correo interno no se reverifica al entregarse; evita montar un segundo dominio |
+| 9 | Adjuntos | `mime_header_checks` en Postfix | Pocas líneas, rechazo `5xx` visible. **Límite:** solo mira el nombre, no el contenido ni archivos dentro de `.zip` |
+| 10 | Pruebas | Nueva serie **D** en `scripts/probar.sh` | Mismo formato de evidencias y `reporte.html` |
+| 11 | Reparto | **PC 1:** DNS, Rspamd, claves DKIM, `main.cf`, `ufw`. **PC 2:** ataque por el 25, pruebas D, capturas, cabeceras `Authentication-Results` en Thunderbird | Cada PC toca lo que ejecuta |
+
+### Direcciones de la red del laboratorio
+
+| Servicio | IP |
+|---|---|
+| mail-lab (Postfix + Dovecot) | 172.30.53.10 |
+| Rspamd | 172.30.53.11 |
+| DNS (bind9) | 172.30.53.53 |
+
+### Cambios previstos en la base
+
+Solo dos: dos servicios nuevos en `docker-compose.yml` (más descomentar el puerto 25) y
+`smtpd_milters` / `non_smtpd_milters` en `main.cf`. El resto son archivos nuevos (`dns/`, `rspamd/`).
+
+### Orden de trabajo (para no romper la base)
+
+1. Cada cambio en una rama propia y entra a `main` con PR revisado por el otro PC.
+2. Levantar DNS y Rspamd **antes** de añadir `smtpd_milters`; si no, Postfix no podrá contactar al milter.
+3. Tras cada cambio, `scripts/probar.sh` debe seguir pasando las 17 pruebas actuales.
+4. Demo "antes": puerto 25 abierto, sin DMARC → el `From:` falso se entrega. Demo "después": con DMARC → `550`.
