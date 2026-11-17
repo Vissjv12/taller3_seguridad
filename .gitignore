@@ -1,0 +1,16 @@
+# Secretos: nunca se suben a Git
+.env
+secrets/
+ca-privada/
+
+# Certificados generados con crear-ca.sh (el PC 2 recibe solo ca.crt)
+certs/
+
+# Evidencia generada en ejecuciones locales (no se versiona)
+evidencias/
+
+# Configuración local de Docker (BuildKit) y artefactos de ejecución
+.docker/
+__pycache__/
+*.pyc
+*.log

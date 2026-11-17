@@ -6,13 +6,15 @@ Servidor de correo de laboratorio para `lab.test`, con cuentas `ana@lab.test` y 
 - **993**: IMAP con TLS implícito.
 - **143**: deshabilitado. **25**: no publicado (solo para la demo de seguridad).
 
-| Componente | Versión (imagen `debian:12-slim`) |
+| Componente | Versión observada (imagen `debian:12-slim`) |
 |---|---|
-| Postfix | 3.7.x (registrar la exacta con `scripts/evidencias-config.sh`) |
-| Dovecot | 2.3.19 (sintaxis **2.3**; la 2.4 es distinta) |
-| OpenSSL | 3.0.x |
+| Postfix | **3.7.11** |
+| Dovecot | **2.3.19.1** (sintaxis **2.3**; la 2.4 usa otros nombres de opción) |
+| OpenSSL | **3.0.22** |
 
-> La configuración se validó con Postfix 3.8.6, Dovecot 2.3.21 y OpenSSL 3.0.13 (misma rama): 17 de 17 pruebas pasan.
+> Versiones de la corrida de referencia; regístrenlas en cada ejecución con
+> `scripts/evidencias-config.sh`. La configuración se validó con Postfix 3.8.6,
+> Dovecot 2.3.21 y OpenSSL 3.0.13 (misma rama): 17 de 17 pruebas pasan.
 
 ---
 
@@ -80,7 +82,8 @@ El `.gitignore` ya los excluye. Antes de cada `git push`, revisen `git status`.
 
 ## Clientes (PC 1 y PC 2)
 
-1. Copiar `certs/ca.crt` al PC 2 (viene en el repositorio).
+1. Copiar `certs/ca.crt` al PC 2. Se genera en el PC 1 con `scripts/crear-ca.sh`
+   y no se versiona: solo la CA pública viaja al cliente.
 2. **Thunderbird usa su propio almacén de certificados.** Ir a *Configuración → Privacidad y seguridad → Certificados → Administrar certificados → Autoridades → Importar* `ca.crt`, y marcar *"Confiar en esta CA para identificar servidores"*.
 3. Cuenta nueva con configuración manual:
 
@@ -156,6 +159,7 @@ y autenticado, pero **el servidor lo tiene legible**.
 taller3-correo/
 ├── docker-compose.yml        Servicio, puertos (ligados a LAB_IP), red fija, volumen
 ├── .env.example              Plantilla de LAB_IP
+├── .gitignore                Excluye .env, secrets/, ca-privada/ y certs/
 ├── mail/
 │   ├── Dockerfile            Debian 12 + paquetes oficiales
 │   ├── entrypoint.sh         Instala config y secretos, valida y arranca
