@@ -1,0 +1,34 @@
+name: taller3-correo
+
+services:
+  mail:
+    build: ./mail
+    image: taller3/mail:local
+    container_name: mail-lab
+    hostname: mail.lab.test
+    networks:
+      lab:
+        ipv4_address: 172.30.53.10
+    ports:
+      # Publicados SOLO en la IP del PC 1 dentro de la red del laboratorio
+      # (definida en .env). Así no quedan expuestos en otras interfaces.
+      - "${LAB_IP:?Define LAB_IP en el archivo .env}:587:587"
+      - "${LAB_IP}:993:993"
+      # Puerto 25: solo para la demo de suplantación de la fase de seguridad
+      # - "${LAB_IP}:25:25"
+    volumes:
+      - ./mail/config:/etc/lab-config:ro
+      - ./certs/mail.crt:/etc/ssl/lab/mail.crt:ro
+      - ./secrets:/run/lab-secrets:ro
+      - buzones:/var/mail/vhosts
+    restart: unless-stopped
+
+networks:
+  lab:
+    # Subred fija: la usa scripts/bloquear-salida.sh
+    ipam:
+      config:
+        - subnet: 172.30.53.0/24
+
+volumes:
+  buzones:

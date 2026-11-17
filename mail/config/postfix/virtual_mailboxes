@@ -1,0 +1,4 @@
+# Buzones que existen en lab.test (el valor "OK" solo indica existencia).
+# El almacenamiento real lo gestiona Dovecot.
+ana@lab.test    OK
+pedro@lab.test  OK

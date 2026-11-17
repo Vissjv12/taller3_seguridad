@@ -1,0 +1,79 @@
+# =====================================================================
+#  Taller 3 - Postfix (Debian 12: Postfix 3.7.x)
+#  Documentación: https://www.postfix.org/postconf.5.html
+#  Este archivo NO contiene secretos: la clave privada se monta aparte.
+# =====================================================================
+
+compatibility_level = 3.6
+
+# --- Identidad del servidor (debe coincidir con el SAN del certificado)
+myhostname = mail.lab.test
+mydomain   = lab.test
+myorigin   = $mydomain
+# Saludo SMTP sin nombre ni versión del software (no dar pistas al atacante)
+smtpd_banner = $myhostname ESMTP
+
+inet_interfaces = all
+inet_protocols  = ipv4
+
+# Solo el propio contenedor es "red de confianza".
+# NUNCA agregar aquí la red de Docker ni la LAN: sería un relay abierto.
+mynetworks = 127.0.0.0/8
+
+# Logs a la salida estándar del contenedor (docker compose logs mail)
+maillog_file = /dev/stdout
+
+# --- Entrega: dominio virtual lab.test -> Dovecot por LMTP
+mydestination = localhost
+alias_maps =
+alias_database =
+virtual_mailbox_domains = lab.test
+virtual_mailbox_maps    = texthash:/etc/postfix/virtual_mailboxes
+virtual_transport       = lmtp:unix:private/dovecot-lmtp
+
+# --- Aislamiento: NADA sale del laboratorio, aunque alguien se equivoque
+relayhost =
+relay_domains =
+default_transport = error:Laboratorio aislado - no se entrega correo externo
+relay_transport   = error:Laboratorio aislado - no se entrega correo externo
+
+# --- TLS del servidor (entrada)
+smtpd_tls_cert_file = /etc/ssl/lab/mail.crt
+smtpd_tls_key_file  = /etc/ssl/lab/private/mail.key
+# Nivel general "may" (puerto 25). En submission (587) se fuerza "encrypt".
+smtpd_tls_security_level     = may
+smtpd_tls_protocols          = >=TLSv1.2
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+smtpd_tls_mandatory_ciphers  = high
+smtpd_tls_loglevel           = 1
+# Deja constancia en la cabecera Received: de la versión TLS y la suite
+smtpd_tls_received_header    = yes
+
+# --- Autenticación SASL delegada a Dovecot (se activa solo en 587)
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = no
+smtpd_sasl_security_options     = noanonymous
+smtpd_sasl_tls_security_options = noanonymous
+
+# --- Antisuplantación: quién puede usar cada dirección de remitente
+smtpd_sender_login_maps = texthash:/etc/postfix/sender_login_maps
+
+# --- Endurecimiento general
+disable_vrfy_command  = yes
+smtpd_helo_required   = yes
+strict_rfc821_envelopes = yes
+message_size_limit    = 10485760
+
+# Límites de tasa (sustituyen parcialmente a fail2ban)
+anvil_rate_time_unit = 60s
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit    = 30
+smtpd_client_auth_rate_limit       = 10
+
+# --- Restricciones del puerto 25 (entrada de otros servidores)
+# El 25 NO se publica en la fase base; existe para la demo de suplantación.
+smtpd_helo_restrictions      = reject_invalid_helo_hostname
+smtpd_sender_restrictions    = reject_non_fqdn_sender
+smtpd_relay_restrictions     = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = reject_non_fqdn_recipient
