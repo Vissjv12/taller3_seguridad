@@ -1,9 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ ! -f /run/lab-dkim/taller3.txt ]; then
-  echo "ERROR: falta secrets/dkim/taller3.txt. Ejecuta primero scripts/crear-dkim.sh"
-  echo "(si Docker creó una carpeta vacía con ese nombre, bórrala: rm -r secrets/dkim/taller3.txt)"
+if ! ls /run/lab-dkim/*.txt >/dev/null 2>&1; then
+  echo "ERROR: no hay registros DKIM en dkim-publica/. Ejecuta scripts/iniciar.sh o scripts/crear-dkim.sh"
   exit 1
 fi
 

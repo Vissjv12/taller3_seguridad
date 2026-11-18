@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PLANTILLA=/etc/lab-dns/lab.test.zone.plantilla
-DKIM=/run/lab-dkim/taller3.txt
+DKIM_DIR=${DKIM_DIR:-/run/lab-dkim}
 ESTADO=/var/cache/bind/dmarc.estado
 ZONA=/var/cache/bind/db.lab.test
 
@@ -14,9 +14,9 @@ ZONA=/var/cache/bind/db.lab.test
 {
   sed -e "s/__SERIAL__/$(date +%s)/" -e "s/__LAB_IP__/$LAB_IP/g" "$PLANTILLA"
   echo
-  echo "; --- DKIM: clave pública del selector taller3 (generada con crear-dkim.sh)"
-  cat "$DKIM"
-  echo
+  echo "; --- DKIM: claves públicas (crear-dkim.sh / rotar-dkim.sh)."
+  echo ";     Durante una rotación se publican la antigua y la nueva a la vez."
+  for t in "$DKIM_DIR"/*.txt; do cat "$t"; echo; done
   if [ "$(cat "$ESTADO")" = "on" ]; then
     echo "; --- DMARC: si SPF y DKIM no validan alineados con el From:, rechazar."
     echo "; Sin rua=: no hay salida a Internet para enviar reportes."

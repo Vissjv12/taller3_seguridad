@@ -2,8 +2,14 @@ name: taller3-correo
 
 # Red del laboratorio
 #   172.30.53.10  mail-lab    Postfix + Dovecot
-#   172.30.53.11  rspamd-lab  Rspamd (milter: DKIM, SPF, DMARC, spam)
+#   172.30.53.11  rspamd-lab  Rspamd (milter: DKIM, SPF, DMARC, spam, reglas propias)
+#   172.30.53.12  clamav-lab  ClamAV (OPCIONAL: COMPOSE_PROFILES=antivirus en .env)
 #   172.30.53.53  dns-lab     bind9 (zona lab.test con SPF, DKIM y DMARC)
+#
+# Mínimo privilegio: cada contenedor monta SOLO los secretos que usa.
+#   mail   -> secrets/mail/  (clave TLS y hashes de contraseñas)
+#   rspamd -> secrets/dkim/  (claves DKIM privadas)
+#   dns    -> dkim-publica/  (solo registros públicos)
 
 services:
   dns:
@@ -12,34 +18,57 @@ services:
     container_name: dns-lab
     hostname: ns.lab.test
     environment:
-      LAB_IP: ${LAB_IP:?Define LAB_IP en el archivo .env}
+      LAB_IP: ${LAB_IP:?Falta LAB_IP. Ejecuten scripts/modo.sh casa o scripts/modo.sh clase}
     networks:
       lab:
         ipv4_address: 172.30.53.53
     volumes:
       - ./dns/config:/etc/lab-dns:ro
-      # Solo el registro PÚBLICO de DKIM (la clave privada no entra aquí)
-      - ./secrets/dkim/taller3.txt:/run/lab-dkim/taller3.txt:ro
+      - ./dkim-publica:/run/lab-dkim:ro
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, NET_BIND_SERVICE, SYS_RESOURCE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD-SHELL", "dig @127.0.0.1 +short +time=2 SOA lab.test | grep -q ns.lab.test"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
-    # Sin "ports": el DNS no se publica fuera de la red de Docker
 
   rspamd:
     build: ./rspamd
     image: taller3/rspamd:local
     container_name: rspamd-lab
     hostname: rspamd.lab.test
+    environment:
+      PERFILES: ${COMPOSE_PROFILES:-}
     depends_on:
-      - dns
+      dns:
+        condition: service_healthy
     dns:
       - 172.30.53.53
     networks:
       lab:
         ipv4_address: 172.30.53.11
     volumes:
-      - ./rspamd/local.d:/etc/rspamd/local.d:ro
-      - ./rspamd/override.d:/etc/rspamd/override.d:ro
-      # Solo la clave PRIVADA de DKIM
-      - ./secrets/dkim/taller3.key:/run/lab-dkim/taller3.key:ro
+      - ./rspamd:/etc/lab-rspamd:ro
+      - ./secrets/dkim:/run/lab-dkim/privada:ro
+      - ./dkim-publica:/run/lab-dkim/publica:ro
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD-SHELL", "rspamc -t 3 stat >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
     restart: unless-stopped
 
   mail:
@@ -48,28 +77,59 @@ services:
     container_name: mail-lab
     hostname: mail.lab.test
     depends_on:
-      - rspamd
+      rspamd:
+        condition: service_healthy
     networks:
       lab:
         ipv4_address: 172.30.53.10
     ports:
-      # Publicados SOLO en la IP del PC 1 dentro de la red del laboratorio.
+      # Publicados SOLO en LAB_IP: 127.0.0.1 en casa (invisible para la red)
+      # o la IP del PC 1 en clase. El 25 lo limita firewall-lab.sh al PC 2.
+      - "${LAB_IP}:25:25"
       - "${LAB_IP}:587:587"
       - "${LAB_IP}:993:993"
-      # Puerto 25 (recepción servidor-a-servidor, demo de suplantación).
-      # ufw NO filtra puertos de Docker: lo limita scripts/firewall-lab.sh
-      # (cadena DOCKER-USER) para que solo el PC 2 pueda usarlo.
-      - "${LAB_IP}:25:25"
     volumes:
       - ./mail/config:/etc/lab-config:ro
       - ./certs/mail.crt:/etc/ssl/lab/mail.crt:ro
-      - ./secrets:/run/lab-secrets:ro
+      - ./secrets/mail:/run/lab-secrets:ro
       - buzones:/var/mail/vhosts
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 300
+    healthcheck:
+      # Sin abrir conexiones SMTP (no ensucia los logs de las demos)
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1 && pgrep -x dovecot >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  clamav:
+    # OPCIONAL: se levanta solo con COMPOSE_PROFILES=antivirus en .env
+    profiles: [antivirus]
+    build: ./clamav
+    image: taller3/clamav:local
+    container_name: clamav-lab
+    hostname: clamav.lab.test
+    networks:
+      lab:
+        ipv4_address: 172.30.53.12
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "3"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
     restart: unless-stopped
 
 networks:
   lab:
-    # Subred fija: la usan las IP de arriba y scripts/firewall-lab.sh
     ipam:
       config:
         - subnet: 172.30.53.0/24

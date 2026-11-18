@@ -1,452 +1,364 @@
-# Taller 3: correo con TLS y seguridad (Postfix + Dovecot + Rspamd + bind9)
+# Taller 3: correo con TLS y seguridad
 
-Servidor de correo de laboratorio para el dominio ficticio `lab.test`, con las cuentas
-`ana@lab.test` y `pedro@lab.test`, en contenedores Docker sobre un PC Linux, con un
-segundo PC Linux como cliente y como "atacante".
+Servidor de correo de laboratorio para el dominio ficticio `lab.test` (cuentas `ana@lab.test`
+y `pedro@lab.test`) en contenedores Docker. **Funciona igual en un solo PC (en casa) y con
+dos PCs en red (en clase)**: solo cambia el modo.
 
-**Fase base (taller):**
-- **587**: SMTP submission con STARTTLS **obligatorio** y autenticación obligatoria.
-- **993**: IMAP con TLS implícito. **143**: deshabilitado.
+| Qué | Cómo |
+|---|---|
+| Envío (587) | STARTTLS obligatorio, autenticación solo dentro de TLS |
+| Lectura (993) | TLS implícito; el 143 está deshabilitado |
+| Recepción (25) | Como otro servidor de Internet; en clase, solo desde el PC 2 |
+| Autenticidad | SPF, DKIM (con rotación de claves) y DMARC `p=reject`, en un DNS propio |
+| Antisuplantación | Sobre (Postfix) y `From:` visible (regla propia en Rspamd) atados al usuario |
+| Ataques | Protección contra SMTP smuggling, fuerza bruta y agotamiento de recursos |
+| Adjuntos | Bloqueo por extensión + antivirus ClamAV **opcional** |
+| Contenedores | Cada uno ve solo sus secretos, con capacidades mínimas y límites de memoria y CPU |
 
-**Fase de seguridad:**
-- **25**: recepción servidor-a-servidor, solo accesible desde el PC 2 (demo de suplantación).
-- **SPF, DKIM y DMARC** para `lab.test`, publicados por un DNS propio (bind9) y aplicados por Rspamd.
-- Firma DKIM de todo lo que sale por 587, rechazo de adjuntos peligrosos y antisuplantación del remitente.
-
-> Resultado de la validación de referencia: **23 de 23 pruebas pasan** (`scripts/probar.sh`).
+> Validación de referencia: **27 de 27 pruebas pasan** (`scripts/probar.sh`), incluido el antivirus.
+> El diseño, los límites y la relación con la rúbrica están en [`docs/DISENO.md`](docs/DISENO.md).
 
 ---
 
 ## Índice
 
-1. [Arquitectura](#1-arquitectura)
-2. [Reparto del trabajo](#2-reparto-del-trabajo)
-3. [Puesta en marcha del servidor (PC 1)](#3-puesta-en-marcha-del-servidor-pc-1)
-4. [Preparación del cliente (PC 2)](#4-preparación-del-cliente-pc-2)
-5. [Configurar Thunderbird (ambos PCs)](#5-configurar-thunderbird-ambos-pcs)
-6. [Ejecutar las pruebas](#6-ejecutar-las-pruebas)
-7. [Guía por actividades del taller](#7-guía-por-actividades-del-taller)
-8. [Fase de seguridad: demostraciones](#8-fase-de-seguridad-demostraciones)
-9. [Capturas de tráfico](#9-capturas-de-tráfico)
-10. [Decisiones de diseño](#10-decisiones-de-diseño)
-11. [Límites: qué NO protege este laboratorio](#11-límites-qué-no-protege-este-laboratorio)
-12. [Entregable](#12-entregable)
-13. [Operación diaria y problemas frecuentes](#13-operación-diaria-y-problemas-frecuentes)
-14. [Estructura del repositorio](#14-estructura-del-repositorio)
+1. [Requisitos (una vez por PC)](#1-requisitos-una-vez-por-pc)
+2. [Trabajar en casa (un solo PC)](#2-trabajar-en-casa-un-solo-pc)
+3. [En clase: juntar los dos PCs](#3-en-clase-juntar-los-dos-pcs)
+4. [Configurar Thunderbird](#4-configurar-thunderbird)
+5. [Pruebas automáticas](#5-pruebas-automáticas)
+6. [Demostraciones para la presentación](#6-demostraciones-para-la-presentación)
+7. [Actividades del taller y evidencias](#7-actividades-del-taller-y-evidencias)
+8. [Capturas de tráfico](#8-capturas-de-tráfico)
+9. [Antivirus (opcional)](#9-antivirus-opcional)
+10. [Entregable](#10-entregable)
+11. [Comandos útiles y problemas frecuentes](#11-comandos-útiles-y-problemas-frecuentes)
+12. [Estructura del repositorio](#12-estructura-del-repositorio)
 
 ---
 
-## 1. Arquitectura
+## 1. Requisitos (una vez por PC)
 
-```
- PC 1 (Linux) - servidor                                PC 2 (Linux) - cliente / "atacante"
- ┌──────────────────────────────────────────────┐      ┌───────────────────────────────┐
- │ Docker, red lab 172.30.53.0/24               │      │ Thunderbird (Pedro)           │
- │                                              │ 587  │ scripts/probar.sh             │
- │  ┌────────────────┐  milter  ┌────────────┐  │◄─────│ scripts/demo-suplantacion.sh  │
- │  │ mail-lab  .10  │─────────►│ rspamd .11 │  │ 993  │ tcpdump / Wireshark           │
- │  │ Postfix        │  :11332  │ DKIM/SPF/  │  │◄─────│                               │
- │  │ Dovecot        │          │ DMARC/spam │  │  25  │                               │
- │  └────────────────┘          └─────┬──────┘  │◄─────│ (solo esta IP: PC2_IP)        │
- │                                    │ DNS     │      └───────────────────────────────┘
- │                              ┌─────▼──────┐  │
- │                              │ dns-lab .53│  │      Clientes: /etc/hosts
- │                              │ bind9      │  │      mail.lab.test -> LAB_IP
- │                              └────────────┘  │
- │ Thunderbird (Ana)                            │
- └──────────────────────────────────────────────┘
-```
-
-| Contenedor | IP | Función | Puertos publicados en `LAB_IP` |
-|---|---|---|---|
-| `mail-lab` | 172.30.53.10 | Postfix (SMTP) + Dovecot (IMAP, LMTP, SASL) | 25, 587, 993 |
-| `rspamd-lab` | 172.30.53.11 | Milter: firma DKIM, verifica SPF/DKIM/DMARC, puntuación de spam | ninguno |
-| `dns-lab` | 172.30.53.53 | bind9 autoritativo para `lab.test` (SPF, DKIM, DMARC) | ninguno |
-
-### Versiones
-
-| Componente | Imagen `debian:12-slim` (corrida de referencia del equipo) | Validación en vivo |
-|---|---|---|
-| Postfix | **3.7.11** | 3.8.6 |
-| Dovecot | **2.3.19.1** (sintaxis **2.3**; la 2.4 usa otros nombres) | 2.3.21 |
-| OpenSSL | **3.0.22** | 3.0.13 |
-| Rspamd | 3.4.x (paquete de Debian 12) | 3.8.1 |
-| BIND | 9.18.x | 9.18.39 |
-
-Registren las versiones exactas de **su** ejecución con `scripts/evidencias-config.sh`.
-La fase de seguridad se validó con Rspamd 3.8.1. Debian 12 trae la 3.4: el contenedor
-ejecuta `rspamadm configtest` al arrancar y se detiene si alguna opción no es compatible.
-
----
-
-## 2. Reparto del trabajo
-
-| Quién | Equipo | Responsabilidades |
-|---|---|---|
-| Integrante A | **PC 1** | Docker, contenedores, secretos (CA, usuarios, DKIM), `main.cf`, firewall, `dmarc.sh`, `verificar-dkim.sh`, Thunderbird de Ana |
-| Integrante B | **PC 2** | Thunderbird de Pedro, `probar.sh`, `demo-suplantacion.sh`, capturas, revisión de cabeceras `Authentication-Results` |
-| Integrante C | Sin PC fijo | Revisión de configuraciones en Git, bitácora de evidencias, diagrama de tramos, informe y presentación. Ejecuta en persona al menos una prueba y la demo en algún momento |
-
-Regla de Git: cada cambio en una rama propia y entra a `main` con un PR revisado por otro integrante.
-
----
-
-## 3. Puesta en marcha del servidor (PC 1)
-
-### 3.1 Requisitos (una sola vez)
+Linux (Ubuntu o Debian) con conexión a Internet **la primera vez** (para descargar las imágenes).
 
 ```bash
 sudo apt update
-sudo apt install -y docker.io docker-compose-v2 git openssl     # o Docker CE oficial
+sudo apt install -y docker.io docker-compose-v2 git openssl netcat-openbsd thunderbird tcpdump wireshark
 sudo usermod -aG docker $USER
-# Cerrar sesión y volver a entrar (o reiniciar) para usar docker sin sudo
-docker run --rm hello-world   # comprobación
-```
+# Cerrar sesión y volver a entrar (o reiniciar). Comprobar:
+docker run --rm hello-world
 
-### 3.2 Clonar y configurar las IP
-
-```bash
 git clone https://github.com/Vissjv12/taller3_seguridad.git
 cd taller3_seguridad
-chmod +x scripts/*.sh          # los permisos se pierden si se suben archivos desde la web de GitHub
-ip -4 addr                     # anotar la IP del PC 1 en la red del laboratorio
-cp .env.example .env
-nano .env                      # LAB_IP = IP del PC 1 ; PC2_IP = IP del PC 2
+chmod +x scripts/*.sh       # necesario si los archivos se subieron desde la web de GitHub
 ```
 
-`LAB_IP` se usa para publicar los puertos **y** para el registro SPF. `PC2_IP` es la única IP
-que podrá conectarse al puerto 25. Si alguna IP cambia, editen `.env` y ejecuten
-`docker compose up -d` (y de nuevo `sudo scripts/firewall-lab.sh`).
-
-Agreguen también en el PC 1 la línea a `/etc/hosts`:
-
-```bash
-echo "$(grep ^LAB_IP= .env | cut -d= -f2)  mail.lab.test" | sudo tee -a /etc/hosts
-```
-
-### 3.3 Generar los secretos (quedan fuera de Git)
-
-```bash
-scripts/crear-ca.sh          # CA del laboratorio + certificado con SAN mail.lab.test
-scripts/crear-usuarios.sh    # pide la contraseña de ana y pedro (mínimo 10 caracteres)
-scripts/crear-dkim.sh        # clave DKIM RSA 2048, selector "taller3"
-```
-
-| Archivo generado | Qué es | ¿Se versiona? | ¿Se entrega? |
-|---|---|---|---|
-| `certs/ca.crt` | Certificado público de la CA | No (se copia al PC 2) | Sí |
-| `certs/mail.crt` | Certificado del servidor | No | Sí |
-| `secrets/mail.key` | Clave privada TLS del servidor | **No** | **No** |
-| `secrets/users.passwd` | Hashes SHA512-CRYPT de las contraseñas | **No** | **No** |
-| `secrets/dkim/taller3.key` | Clave privada DKIM | **No** | **No** |
-| `secrets/dkim/taller3.txt` | Registro DNS público de DKIM | No | Sí (es pública) |
-| `ca-privada/ca.key` | Clave privada de la CA | **No** | **No**. Muévanla a un USB al terminar |
-
-> **Importante:** generen los secretos **antes** de `docker compose up`. Si Docker arranca sin
-> ellos, crea carpetas vacías con esos nombres. Los scripts las limpian, pero si ven el error
-> "falta ...", borren la carpeta indicada y vuelvan a generar.
-
-### 3.4 Construir y levantar
-
-```bash
-docker compose up -d --build
-docker compose ps                      # los tres contenedores en estado "running"
-```
-
-Revisen el arranque de cada contenedor (Ctrl+C para salir de los logs):
-
-```bash
-docker compose logs dns    | head -40  # versión de BIND y la zona lab.test generada
-docker compose logs rspamd | head -10  # versión de Rspamd y "syntax OK"
-docker compose logs mail   | head -15  # versiones de Postfix/Dovecot/OpenSSL, sin errores
-```
-
-Cada contenedor **valida su configuración al arrancar** (`postfix check`, `doveconf -n`,
-`rspamadm configtest`, `named-checkconf`, `named-checkzone`) y se detiene si hay errores.
-
-### 3.5 Firewall del laboratorio
-
-```bash
-sudo scripts/firewall-lab.sh
-```
-
-Aplica dos reglas en la cadena `DOCKER-USER` de iptables:
-
-1. Ningún contenedor puede **abrir** conexiones hacia fuera de la red del laboratorio (aislamiento).
-2. El puerto 25 solo acepta conexiones nuevas desde `PC2_IP`.
-
-> **¿Por qué no ufw?** ufw **no** filtra los puertos publicados por Docker: Docker inserta sus
-> reglas de iptables antes que las de ufw. Una regla `ufw allow from PC2 to any port 25`
-> daría la falsa impresión de estar protegido. Para 587 y 993 en el host sí pueden usar
-> `sudo ufw allow 587,993/tcp` si ufw está activo, pero el control real del 25 está en `DOCKER-USER`.
-
-Las reglas se pierden al reiniciar Docker o el equipo: vuelvan a ejecutar el script.
-Para retirarlas: `sudo scripts/firewall-lab.sh quitar`.
-
-### 3.6 Comprobar el DNS y guardar la configuración efectiva
-
-```bash
-scripts/dmarc.sh estado                # DMARC: on + registro publicado
-scripts/evidencias-config.sh           # versiones, postconf, doveconf, DNS y Rspamd
-```
+> **Todos los comandos de esta guía se ejecutan desde la carpeta `taller3_seguridad`.**
 
 ---
 
-## 4. Preparación del cliente (PC 2)
+## 2. Trabajar en casa (un solo PC)
+
+Cada integrante puede montar el laboratorio completo en su PC. El mismo equipo hace de
+servidor, de cliente (Ana y Pedro) y de "atacante".
 
 ```bash
-sudo apt update
-sudo apt install -y git openssl netcat-openbsd thunderbird wireshark tcpdump
-git clone https://github.com/Vissjv12/taller3_seguridad.git
-cd taller3_seguridad
-chmod +x scripts/*.sh
-
-# mail.lab.test apunta a la IP del PC 1 (LAB_IP)
-echo "192.168.1.50  mail.lab.test" | sudo tee -a /etc/hosts     # usar la IP real
-
-# Traer SOLO la CA pública desde el PC 1 (no se versiona)
-mkdir -p certs
-scp usuario@IP_DEL_PC1:~/taller3_seguridad/certs/ca.crt certs/
-# (sin SSH: copiarla con un USB)
-
-# Comprobación rápida (debe decir "Verification: OK")
-openssl s_client -connect mail.lab.test:993 -servername mail.lab.test \
-  -CAfile certs/ca.crt -verify_hostname mail.lab.test -verify_return_error -brief </dev/null
+scripts/modo.sh casa        # todo en 127.0.0.1: el servidor no es visible desde la red de casa
+scripts/iniciar.sh          # la 1ª vez pide las contraseñas de ana y pedro y tarda varios minutos
+scripts/comprobar-conexion.sh
+LAB_USER=ana@lab.test scripts/probar.sh
 ```
+
+`iniciar.sh` hace todo en orden y **se puede repetir sin miedo** (no duplica nada):
+
+1. comprueba Docker y el modo;
+2. crea los secretos que falten: CA, certificado TLS, contraseñas y clave DKIM;
+3. construye y levanta los contenedores y **espera a que estén sanos**;
+4. aplica el firewall (pide la contraseña de `sudo`);
+5. muestra un resumen con los pasos siguientes.
+
+Después, configuren Thunderbird con **las dos cuentas en el mismo programa** ([sección 4](#4-configurar-thunderbird)).
+
+> **Cómo funciona la demo de suplantación en un solo PC:** cuando el propio PC se conecta a un
+> puerto publicado por Docker, el servidor ve la conexión como si viniera de `172.30.53.1`
+> (la puerta de enlace de la red Docker), que **no** está autorizada por el SPF (`127.0.0.1`).
+> Por eso el "ataque" se comporta igual que desde el PC 2. Pueden comprobarlo con
+> `docker compose logs mail | grep "connect from"`.
+
+**Al día siguiente:** `scripts/iniciar.sh` (los buzones y secretos se conservan).
 
 ---
 
-## 5. Configurar Thunderbird (ambos PCs)
+## 3. En clase: juntar los dos PCs
 
-1. **Importar la CA en Thunderbird.** Thunderbird usa **su propio almacén de certificados**:
-   instalar la CA en el sistema no basta.
+En clase **solo cuentan los secretos del PC 1** (el servidor). El PC 2 solo necesita la CA
+pública del PC 1. Así ninguna clave privada pasa de un equipo a otro.
+
+### Antes de ir a clase (en casa, con Internet)
+
+- PC 1: `scripts/iniciar.sh` funcionando y `scripts/probar.sh` en verde. Las imágenes quedan
+  construidas, así que en clase no hace falta Internet.
+- Respaldo opcional: `docker save taller3/mail:local taller3/rspamd:local taller3/dns:local -o imagenes-taller3.tar` (a un USB).
+- PC 2: `git pull` y `scripts/demo-suplantacion.sh` disponible.
+- Los dos PCs en la **misma red** en clase (la misma Wi-Fi). Si la red de la universidad
+  aísla a los equipos entre sí, usen el hotspot de un celular.
+
+### Paso a paso en clase (unos 10 minutos)
+
+| # | PC 1 (servidor) | PC 2 (cliente / "atacante") |
+|---|---|---|
+| 1 | Conectarse a la red | Conectarse a la **misma** red y anotar su IP: `ip -4 addr` |
+| 2 | `git pull` | `git pull` |
+| 3 | `scripts/modo.sh clase` → confirma su IP y escribe la del PC 2 | |
+| 4 | `scripts/iniciar.sh` → al final muestra los comandos para el PC 2 | |
+| 5 | | `scripts/modo.sh cliente IP_DEL_PC1` |
+| 6 | | Traer la CA con el comando `scp` que mostró `iniciar.sh` en el PC 1 (o con un USB) |
+| 7 | | `scripts/comprobar-conexion.sh` → todo en ✔ |
+| 8 | | Thunderbird: importar **esa** `ca.crt` y verificar la cuenta de Pedro ([sección 4](#4-configurar-thunderbird)) |
+| 9 | Thunderbird: cuenta de Ana (sin cambios si ya estaba) | `LAB_USER=ana@lab.test scripts/probar.sh` → todo en verde |
+
+`modo.sh clase` cambia `.env` y `/etc/hosts`. `iniciar.sh` vuelve a publicar los puertos
+en la IP de la red, regenera el SPF del DNS con esa IP, conserva los buzones y aplica el
+firewall: el puerto 25 queda limitado al PC 2.
+
+**Si `scp` no funciona** (el PC 1 sin servidor SSH): copien `certs/ca.crt` con un USB, o
+instalen SSH en el PC 1 (`sudo apt install openssh-server`).
+
+**Plan B** (falla la red de clase): en el PC 1, `scripts/modo.sh casa && scripts/iniciar.sh`
+y presenten todo desde un solo PC. Las demos son idénticas.
+
+### Si algo cambia durante la clase
+
+| Situación | Qué hacer |
+|---|---|
+| Cambió la IP del PC 1 | PC 1: `scripts/modo.sh clase` + `scripts/iniciar.sh` · PC 2: `scripts/modo.sh cliente NUEVA_IP` |
+| Cambió la IP del PC 2 | PC 1: `scripts/modo.sh clase NUEVA_IP_PC2` + `scripts/iniciar.sh` |
+| Se reinició el PC 1 | `scripts/iniciar.sh` (vuelve a aplicar el firewall) |
+| El PC 2 no conecta | PC 2: `scripts/comprobar-conexion.sh` dice qué falla |
+
+### Volver a casa
+
+```bash
+scripts/modo.sh casa && scripts/iniciar.sh       # PC 1 (y cualquiera que trabaje solo)
+```
+
+En el PC 2, si quieren volver a trabajar solos con su propio servidor:
+`scripts/modo.sh casa && scripts/iniciar.sh`. En Thunderbird sigue importada su propia CA.
+
+---
+
+## 4. Configurar Thunderbird
+
+1. **Importar la CA en Thunderbird.** Thunderbird usa **su propio almacén**: no basta con
+   instalarla en el sistema.
    *Configuración → Privacidad y seguridad → Certificados → Administrar certificados →
    Autoridades → Importar* `certs/ca.crt` → marcar *"Confiar en esta CA para identificar servidores"*.
-2. Crear la cuenta con **configuración manual** (Ana en el PC 1, Pedro en el PC 2):
+   El nombre de la CA incluye el equipo que la creó (`CA Taller3 - nombre-del-pc`), así que
+   la CA de casa y la del PC 1 no se confunden.
+2. Crear las cuentas con **configuración manual**:
 
 | | Servidor | Puerto | Seguridad | Autenticación | Usuario |
 |---|---|---|---|---|---|
 | Entrada (IMAP) | mail.lab.test | 993 | SSL/TLS | Contraseña normal | ana@lab.test |
 | Salida (SMTP) | mail.lab.test | 587 | STARTTLS | Contraseña normal | ana@lab.test |
 
-3. **Nunca** acepten una excepción de seguridad. Si aparece una advertencia de certificado,
-   la CA no está bien importada: arreglen eso, no "confíen igual".
+   Igual para `pedro@lab.test`. En casa, las dos cuentas en el mismo Thunderbird; en clase,
+   Ana en el PC 1 y Pedro en el PC 2.
+3. **Nunca acepten una excepción de seguridad.** Si aparece una advertencia de certificado,
+   la CA importada no es la del servidor (en clase: la del PC 1).
 4. "SSL/TLS" en Thunderbird significa **TLS implícito**, no el protocolo SSL antiguo.
-   La versión real negociada (TLS 1.3) se ve en las pruebas y en la captura.
-5. Para ver las cabeceras de seguridad de un correo: abrirlo y pulsar **Ctrl+U** (código fuente).
+5. **Remitente = cuenta.** El servidor rechaza un `From:` distinto del usuario autenticado
+   (prueba D7). No configuren identidades adicionales con otras direcciones.
+6. Para ver las cabeceras de seguridad de un correo: abrirlo y pulsar **Ctrl+U**.
 
 ---
 
-## 6. Ejecutar las pruebas
+## 5. Pruebas automáticas
 
-Desde el **PC 2** (su IP es la única autorizada en el puerto 25):
+En casa, en el mismo PC. En clase, **desde el PC 2**.
 
 ```bash
-scripts/probar.sh                              # A, B y D1-D3 (sin credenciales)
-LAB_USER=ana@lab.test scripts/probar.sh        # las 23 pruebas (pide la contraseña)
+scripts/comprobar-conexion.sh                    # 10 s: ¿llego al servidor y confío en él?
+LAB_USER=ana@lab.test scripts/probar.sh          # batería completa (pide la contraseña de Ana)
+ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh   # + prueba EICAR, si el antivirus está activo
 ```
 
-Cada ejecución crea `evidencias/pruebas-FECHA/` con la salida cruda de cada prueba (`.txt`)
-y un `reporte.html` listo para el informe. Las credenciales se ocultan automáticamente.
-`probar.sh` termina con código 0 solo si todas pasan.
+Cada ejecución crea `evidencias/pruebas-FECHA/` con la salida cruda de cada prueba y un
+`reporte.html` listo para el informe. Las credenciales se ocultan automáticamente.
 
-| ID | Qué demuestra | Esperado | Actividad |
-|---|---|---|---|
-| A587, A993 | Certificado válido de la CA del laboratorio; versión TLS y suite | `Verification: OK` | 6, 7 |
-| A3 | Rechazo si la CA no es de confianza | `unable to get local issuer certificate` | 8 |
-| A4 | Rechazo si el nombre no coincide con el SAN | `hostname mismatch` | 8 |
-| A5-587, A5-993 | El servidor rechaza TLS 1.1 | `alert protocol version` | Seguridad |
-| B1 | Antes de STARTTLS se anuncia STARTTLS pero **no** AUTH | `250-STARTTLS` sin `AUTH` | 3, 7 |
-| B2, B3 | AUTH y envío sin TLS rechazados | `530 5.7.0 Must issue a STARTTLS command first` | 8 |
-| B4 | IMAP sin cifrado (143) no disponible | conexión rechazada | 4 |
-| B5 | Con TLS pero sin autenticar no se puede enviar | `554 ... Access denied` | 3 |
-| C1, C5 | Autenticación correcta en 587 e IMAP | `235`, `a1 OK` | 3, 4 |
-| C2 | Ana no puede usar la dirección de Pedro como remitente | `553 ... not owned by user` | Seguridad |
-| C3 | Autenticado, pero destino externo rechazado | `554 ... Relay access denied` | 3 |
-| C4 | IMAP rechaza contraseña incorrecta | `a1 NO [AUTHENTICATIONFAILED]` | 8 |
-| C6 | Envío legítimo Ana → Pedro | `250 ... queued` | 7 |
-| D1 | El 25 recibe correo legítimo de un dominio ajeno (control) | `250 ... queued` | Seguridad |
-| D2 | Suplantación total por el 25 (`MAIL FROM` y `From:` = ana) | `554 Rechazado...` | Seguridad |
-| D3 | Solo el `From:` visible falso (phishing típico) | `554 Rechazado...` | Seguridad |
-| D4 | Adjunto `.exe` rechazado | `550 5.7.1 Adjunto peligroso no permitido (.exe)` | Seguridad |
-| D5 | Adjunto `.pdf` aceptado (control) | `250 ... queued` | Seguridad |
-| D6 | Lo enviado por 587 sale firmado con DKIM | `DKIM-Signature: ... d=lab.test; s=taller3` | Seguridad |
+| ID | Qué demuestra | Esperado |
+|---|---|---|
+| A587, A993 | Certificado válido de la CA; versión TLS y suite | `Verification: OK`, TLSv1.3 |
+| A3, A4 | Rechazo de CA no confiable y de nombre incorrecto | error de verificación |
+| A5 | El servidor rechaza TLS 1.1 | handshake fallido |
+| B1 | Antes de STARTTLS se anuncia STARTTLS pero **no** AUTH | sin `250-AUTH` |
+| B2, B3 | AUTH y envío sin TLS rechazados | `530 Must issue a STARTTLS command first` |
+| B4 | IMAP sin cifrado (143) cerrado | conexión rechazada |
+| B5 | Con TLS pero sin autenticar no se envía | `554 Access denied` |
+| C1, C5 | Autenticación correcta en 587 e IMAP | `235`, `a1 OK` |
+| C2 | Ana no puede usar la dirección de Pedro en el **sobre** | `553 not owned by user` |
+| C3 | Autenticada, pero destino externo rechazado | `554 Relay access denied` |
+| C4 | IMAP rechaza contraseña incorrecta | `a1 NO [AUTHENTICATIONFAILED]` |
+| C6 | Envío legítimo Ana → Pedro | `250 queued` |
+| D1 | El 25 recibe correo de un dominio ajeno (control) | `250 queued` |
+| D2 | Suplantación total por el 25 | `554` (DMARC) |
+| D3 | Solo el `From:` visible falso (phishing típico) | `554` (DMARC) |
+| D4, D5 | Adjunto `.exe` rechazado; `.pdf` aceptado | `550` / `250` |
+| D6 | Lo enviado por 587 sale firmado con DKIM | `d=lab.test; s=taller3-N` |
+| D7 | Autenticada como Ana, sobre correcto pero `From: pedro` (suplantación interna) | `554 Suplantacion interna...` |
+| D8 | SMTP smuggling: el correo escondido no se acepta | 1 solo `250 queued` |
+| D9 | Antivirus: adjunto EICAR rechazado (opcional) | `554 Virus detectado` |
+| D10 | Fuerza bruta: tras 6 AUTH fallidos se corta la sesión | `421 too many errors` |
 
-> **D2 y D3 fallan a propósito si DMARC está desactivado** (`scripts/dmarc.sh off`): esa es la demo "antes".
-> **A5-993:** Dovecot solo cierra la conexión. La evidencia fuerte está en el servidor:
-> `docker compose logs mail | grep "unsupported protocol"`.
+> - **D2 y D3 fallan a propósito con DMARC desactivado** (`scripts/dmarc.sh off`): es la demo "antes".
+> - **D10 va al final** porque deja a ese equipo frenado ~1 minuto: esperen antes de usar Thunderbird.
+> - **A5-993:** Dovecot solo cierra la conexión; la evidencia fuerte está en
+>   `docker compose logs mail | grep "unsupported protocol"`.
 
 ---
 
-## 7. Guía por actividades del taller
+## 6. Demostraciones para la presentación
 
-| # | Actividad | Cómo se cumple | Evidencia |
-|---|---|---|---|
-| 1 | Entrega local y buzones; versiones | Dominio virtual `lab.test`, entrega LMTP a Dovecot, Maildir | `evidencias-config.sh`, prueba C6 |
-| 2 | Certificado con SAN firmado por la CA; privada protegida; confianza en clientes | `crear-ca.sh` (ECDSA P-256, SAN, `serverAuth`); clave `0600` dentro del contenedor; CA importada en Thunderbird | A587, A993, `evidencias-config.sh` |
-| 3 | Submission 587 con STARTTLS obligatorio, relay restringido | `master.cf`: `smtpd_tls_security_level=encrypt`, `smtpd_tls_auth_only=yes`, `reject_unauth_destination` | B1, B2, B3, B5, C1, C3 |
-| 4 | IMAP 993 con TLS implícito, sin acceso en claro | `ssl = required`, `disable_plaintext_auth = yes`, 143 con `port = 0` | B4, C5 |
-| 5 | Thunderbird 587/STARTTLS y 993/SSL-TLS | Sección 5 de esta guía | Capturas de pantalla de la configuración |
-| 6 | Verificar certificados antes de enviar credenciales | Comandos `openssl s_client` del enunciado (también automatizados en A587/A993) | Salida de openssl |
-| 7 | Envío Ana ↔ Pedro, captura, versión TLS, suite, certificado | Thunderbird + `tcpdump` (sección 9) | `.pcapng`, A587/A993, cabecera `Received:` |
-| 8 | Rechazo sin TLS y con certificado no confiable | Pruebas automáticas | A3, A4, B2, B3, C4 + intento manual en Thunderbird |
-| 9 | Inspeccionar el mensaje almacenado | `scripts/ver-buzon.sh pedro` | Salida del script |
+Comandos marcados **PC 1** o **PC 2**. En casa, todos en el mismo PC.
 
-### Actividad 9: lo que ve el administrador
+### 6.1 Suplantación (phishing) antes y después de DMARC
 
-```bash
-scripts/ver-buzon.sh pedro
-```
-
-Muestra el mensaje tal como está en disco: el cuerpo **en claro**, la cabecera
-`Received: ... (using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 ...) ... with ESMTPSA`
-y la firma `DKIM-Signature`. Es decir, llegó por TLS, autenticado y firmado,
-pero **el servidor lo tiene legible**. Ni TLS ni DKIM cifran el contenido almacenado.
-
-### Tabla de tramos (para el diagrama)
-
-| Tramo | Protección | Conclusión |
+| # | PC 1 | PC 2 |
 |---|---|---|
-| Cliente → submission 587 | STARTTLS obligatorio + AUTH solo tras TLS | Protege esa conexión; la fase previa a STARTTLS viaja en claro, pero sin credenciales |
-| Cliente → IMAP 993 | TLS implícito | Protege la lectura desde el primer byte |
-| Servidor → servidor (25) | SPF, DKIM y DMARC (autenticidad del remitente). TLS solo oportunista | Es otro tramo con su propia política. Aquí se demuestra la **autenticidad**, no la confidencialidad |
-| Buzón almacenado | Ninguna (texto claro en Maildir) | TLS no da cifrado en reposo ni de extremo a extremo |
+| 1 | `scripts/dmarc.sh off` → "Registro publicado: (ninguno)" | |
+| 2 | | `scripts/demo-suplantacion.sh` → **ENTREGADO** |
+| 3 | | Thunderbird de Pedro: llega "de Ana". Ctrl+U: `dmarc=none`, `spf=fail` |
+| 4 | `scripts/dmarc.sh on` | |
+| 5 | | `scripts/demo-suplantacion.sh` → **554 rechazado** |
+| 6 | `docker compose logs rspamd \| grep forced` → `Action set by DMARC` | |
+| 7 | | `scripts/demo-suplantacion.sh cabecera` → solo el `From:` falso: también rechazado |
 
----
+### 6.2 Suplantación interna (usuario autenticado)
 
-## 8. Fase de seguridad: demostraciones
+DMARC no actúa sobre usuarios autenticados, y Postfix solo controla el **sobre**. Antes de esta
+mejora, Ana podía enviar con sobre `ana@lab.test` pero `From: pedro@lab.test`, y Pedro recibía
+un correo "suyo". La regla propia de Rspamd (`rspamd/rspamd.local.lua`) lo cierra.
 
-### 8.1 Demo de suplantación (phishing) antes y después de DMARC
-
-Necesita los dos PCs. Recomendación: el PC 2 graba la pantalla y captura el puerto 25 (sección 9).
-
-| Paso | PC 1 | PC 2 |
+| # | Comando | Resultado |
 |---|---|---|
-| 1. Antes | `scripts/dmarc.sh off` → "Registro publicado: (ninguno)" | |
-| 2. Ataque | | `scripts/demo-suplantacion.sh` → **ENTREGADO** |
-| 3. Mostrar | | Thunderbird de Pedro: llega "de Ana". Ctrl+U: `dmarc=none`, `spf=fail` |
-| 4. Defensa | `scripts/dmarc.sh on` → `v=DMARC1; p=reject; adkim=s; aspf=s` | |
-| 5. Ataque | | `scripts/demo-suplantacion.sh` → **554 Rechazado** |
-| 6. Prueba | `docker compose logs rspamd \| grep forced` → `Action set by DMARC` | |
-| 7. Variante | | `scripts/demo-suplantacion.sh cabecera`: sobre ajeno, solo el `From:` falso → también rechazado |
+| 1 | `scripts/demo-suplantacion.sh interna` (pide la contraseña de Ana) | `554 5.7.1 Suplantacion interna: From: pedro@lab.test no coincide con el usuario ana@lab.test` |
+| 2 | En Thunderbird de Ana, una identidad con `pedro@lab.test` | `553 ... not owned by user`: Thunderbird usa la misma dirección en sobre y `From:`, así que Postfix lo frena antes (prueba C2) |
 
-**Qué explicar:**
-- Sin autenticación de dominio, cualquier servidor puede poner `From: ana@lab.test`.
-- **SPF** dice qué IP puede enviar por `lab.test` (solo `LAB_IP`, `-all` para el resto).
-- **DKIM** firma criptográficamente lo que sale por 587 (clave privada en Rspamd, pública en DNS).
-- **DMARC** une ambos con el `From:` visible: si ni SPF ni DKIM validan **alineados** con ese
-  dominio, aplica la política publicada (`p=reject`). Basta con que **uno** valide.
-- C2 (`reject_sender_login_mismatch`) solo controla el **sobre** de usuarios autenticados.
-  El `From:` visible y el puerto 25 los cubre DMARC: son controles complementarios.
+Son dos capas complementarias: Postfix ata el **sobre** al usuario y Rspamd ata el **`From:` visible**.
 
-### 8.2 Firma DKIM: válida e inválida (PC 1)
+### 6.3 SMTP smuggling antes y después
+
+| # | PC 1 | PC 2 |
+|---|---|---|
+| 1 | `docker compose exec mail postconf -e smtpd_forbid_bare_newline=no smtpd_forbid_unauth_pipelining=no` y `docker compose exec mail postfix reload` (el valor por defecto en Postfix < 3.9) | |
+| 2 | | `scripts/demo-smuggling.sh` → **VULNERABLE: 2 correos** (el "CONTRABANDO" llega aparte) |
+| 3 | `docker compose restart mail` (vuelve a la configuración del repositorio) | |
+| 4 | | `scripts/demo-smuggling.sh` → **PROTEGIDO: 1 correo** |
+
+### 6.4 Firma DKIM y rotación de claves (PC 1)
 
 Primero envíen un correo cualquiera desde Thunderbird (Ana → Pedro). Luego:
 
 ```bash
-scripts/verificar-dkim.sh pedro
+scripts/verificar-dkim.sh pedro      # intacto: R_DKIM_ALLOW · alterado: R_DKIM_REJECT
+scripts/rotar-dkim.sh                # paso 1: firma con taller3-2, taller3-1 sigue publicado
+#   envíen otro correo: su cabecera DKIM-Signature dirá s=taller3-2
+scripts/rotar-dkim.sh retirar        # paso 2: retira taller3-1 y destruye su clave privada
+scripts/rotar-dkim.sh estado
 ```
 
-| Mensaje | Resultado de Rspamd | Significado |
+Lección validada: durante la transición, un correo firmado con la clave vieja sigue siendo
+válido (`R_DKIM_ALLOW`). **Después de retirarla** da `R_DKIM_PERMFAIL` y DMARC lo rechazaría.
+Por eso la rotación se hace en dos pasos.
+
+### 6.5 Rotación de los demás secretos (PC 1)
+
+| Secreto | Comando | Efecto en los clientes |
 |---|---|---|
-| intacto | `R_DKIM_ALLOW [lab.test:s=taller3]` | La firma coincide con la clave pública del DNS |
-| alterado (se agrega una línea al cuerpo) | `R_DKIM_REJECT [lab.test:s=taller3]` | Cualquier modificación en tránsito rompe la firma |
+| Certificado TLS (clave nueva) | `scripts/renovar-certificado.sh` | Ninguno: confían en la CA |
+| Contraseñas | `scripts/crear-usuarios.sh` | Actualizar la contraseña en Thunderbird |
+| Clave DKIM | `scripts/rotar-dkim.sh` (+ `retirar`) | Ninguno |
+| CA | No se rota en el laboratorio (ver `docs/DISENO.md`) | Habría que reimportarla en todos los Thunderbird |
 
-Hace falta este paso porque el correo interno (587 → buzón local) se firma pero no se reverifica
-al entregarse. En el alterado, DMARC puede seguir en `ALLOW` porque SPF valida (se analiza con
-`--ip LAB_IP`): es un buen ejemplo de que DMARC necesita solo **uno** de los dos.
+### 6.6 Fuerza bruta y adjuntos
 
-### 8.3 Adjuntos peligrosos
+- **Fuerza bruta:** la prueba D10 envía AUTH con una contraseña errónea: 6 respuestas `535` y luego `421 too many errors`.
+- **Adjuntos:** en Thunderbird adjunten un archivo renombrado a `prueba.exe` → *"550 5.7.1 Adjunto peligroso no permitido (.exe)"*.
 
-Lo cubren D4 y D5. Para hacerlo a mano: en Thunderbird, adjunten un archivo renombrado a
-`prueba.exe` → el envío falla con *"550 5.7.1 Adjunto peligroso no permitido (.exe)"*.
-
-### 8.4 Ver los registros DNS
+### 6.7 Lo que ve el administrador (actividad 9)
 
 ```bash
-docker compose exec dns dig @127.0.0.1 +short TXT lab.test                      # SPF
-docker compose exec dns dig @127.0.0.1 +short TXT taller3._domainkey.lab.test   # DKIM
-docker compose exec dns dig @127.0.0.1 +short TXT _dmarc.lab.test               # DMARC
+scripts/ver-buzon.sh pedro           # PC 1
 ```
+
+El cuerpo está **en claro**. La cabecera `Received: ... (using TLSv1.3 ...)` prueba que llegó
+por TLS, y `DKIM-Signature` que está firmado. Pero el servidor lo tiene legible: ni TLS ni DKIM cifran
+lo almacenado.
 
 ---
 
-## 9. Capturas de tráfico
+## 7. Actividades del taller y evidencias
 
-En el **PC 2** (ver la interfaz con `ip -4 addr`):
-
-```bash
-sudo tcpdump -i <interfaz> -w evidencias/captura-587.pcapng host mail.lab.test and port 587
-sudo tcpdump -i <interfaz> -w evidencias/captura-993.pcapng host mail.lab.test and port 993
-sudo tcpdump -i <interfaz> -w evidencias/captura-25.pcapng  host mail.lab.test and port 25
-```
-
-- **587:** en claro se ve el saludo `220`, `EHLO`, `250-STARTTLS` (**sin AUTH**), `STARTTLS` y
-  `220 2.0.0 Ready to start TLS`. Después, solo registros TLS cifrados. Filtro en Wireshark: `smtp || tls`.
-- **993:** todo es TLS desde el primer paquete (`Client Hello`).
-- **25 (demo):** todo en claro, incluido el `From:` falso y el `554` final. Sirve para explicar
-  que el tramo servidor-a-servidor tiene su propia política.
-- **Con TLS 1.3 el certificado viaja cifrado** y no aparece en la captura. Tomen sus datos de
-  `evidencias/pruebas-*/A-tls-valido-*.txt` o de `openssl s_client -showcerts`.
-- **Opcional, descifrar:** lanzar Thunderbird con `SSLKEYLOGFILE=$HOME/tls-keylog.txt thunderbird`
-  y cargar el archivo en Wireshark (*Preferencias → Protocols → TLS → (Pre)-Master-Secret log*).
-  **No entreguen el archivo de claves** (el `.gitignore` lo excluye).
-
----
-
-## 10. Decisiones de diseño
-
-### Fase base
-
-| Tema | Decisión | Motivo |
-|---|---|---|
-| Imágenes | Propias, desde `debian:12-slim` con paquetes oficiales | Poder mostrar y explicar cada archivo de configuración |
-| Postfix y Dovecot | Un solo contenedor `mail` | Socket SASL y LMTP locales; menos piezas móviles |
-| Certificado | ECDSA P-256, SAN `mail.lab.test`, `serverAuth`, 180 días | Los clientes modernos validan el SAN, no el CN |
-| TLS mínimo | TLS 1.2 en Postfix y Dovecot | TLS 1.0/1.1 están obsoletos (A5) |
-| Contraseñas | SHA512-CRYPT en `passwd-file` | Nunca texto plano en disco |
-| chroot de Postfix | Desactivado | En un contenedor no añade aislamiento y complica DNS |
-| Aislamiento | `default_transport = error` + regla `DOCKER-USER` | Doble barrera: ni por configuración ni por red sale correo |
-
-### Fase de seguridad (diseño acordado y ajustes tras la validación)
-
-| # | Tema | Decisión | Nota |
+| # | Actividad | Cómo se cumple | Evidencia |
 |---|---|---|---|
-| 1 | Resolución DNS | Contenedor DNS **solo para el servidor**; los clientes siguen con `/etc/hosts` | Rspamd necesita registros TXT |
-| 2 | Servidor DNS | **bind9**, zona `lab.test`, IP `172.30.53.53`, `recursion no` | Dominios ajenos reciben `REFUSED` al instante: sin esperas por falta de Internet |
-| 3 | Rspamd | Contenedor aparte, `172.30.53.11`, milter `inet:172.30.53.11:11332`, **sin Redis** | Sin Redis no hay Bayes, greylisting ni ratelimit (desactivados explícitamente) |
-| 4 | Puerto 25 | Publicado en `LAB_IP`, limitado a `PC2_IP` | **Ajuste:** con `DOCKER-USER`, no con ufw (ufw no filtra puertos de Docker) |
-| 5 | DMARC | `v=DMARC1; p=reject; adkim=s; aspf=s`, sin `rua=` | **Ajuste:** el rechazo llega como `554 5.7.1` (código que usa el milter de Rspamd), no `550` |
-| 6 | SPF | `v=spf1 ip4:<LAB_IP> -all` | `-all` da `fail` duro |
-| 7 | DKIM | RSA 2048, selector `taller3`, `secrets/dkim/` | El DNS solo monta la parte pública; Rspamd solo la privada |
-| 8 | Evidencia DKIM | `verificar-dkim.sh`: intacto vs. alterado | **Ajuste:** en Rspamd los símbolos se llaman `R_DKIM_ALLOW` y `R_DKIM_REJECT` |
-| 9 | Adjuntos | `mime_header_checks` en Postfix → `550 5.7.1` | Solo mira el nombre del archivo (ver límites) |
-| 10 | Pruebas | Serie **D** en `probar.sh` | Mismo formato de evidencias y `reporte.html` |
-| 11 | Milter caído | `milter_default_action = tempfail` | Si Rspamd no responde, el correo se reintenta (4xx); nunca entra sin analizar |
-| 12 | **IP locales** | `local_addrs` solo loopback, en `rspamd/override.d/` | **Hallazgo de la validación:** por defecto Rspamd trata las IP privadas (como la del PC 2) como "locales" y **no** les aplica SPF ni DMARC. Sin este ajuste la demo falla. Debe ir en `override.d`, porque en `local.d` la lista se suma a la predeterminada en lugar de reemplazarla |
+| 1 | Entrega local, buzones y versiones | Dominio virtual, LMTP a Dovecot, Maildir | `scripts/evidencias-config.sh`, C6 |
+| 2 | Certificado con SAN, privada protegida, confianza en clientes | `crear-ca.sh` / `renovar-certificado.sh`; clave `0600` montada solo en `mail` | A587, A993 |
+| 3 | 587 con STARTTLS obligatorio, relay restringido | `smtpd_tls_security_level=encrypt`, `smtpd_tls_auth_only`, `reject_unauth_destination` | B1–B3, B5, C1, C3 |
+| 4 | 993 con TLS, sin acceso en claro | `ssl = required`, 143 deshabilitado | B4, C5 |
+| 5 | Thunderbird 587/STARTTLS y 993/SSL-TLS | Sección 4 | Capturas de pantalla |
+| 6 | Verificar certificados antes de enviar credenciales | `openssl s_client` del enunciado y `comprobar-conexion.sh` | Salidas de openssl |
+| 7 | Envío Ana ↔ Pedro, captura, versión TLS y suite | Thunderbird + tcpdump (sección 8) | `.pcapng`, A587/A993 |
+| 8 | Rechazo sin TLS y con certificado no confiable | Pruebas automáticas + intento en Thunderbird | A3, A4, B2, B3, C4 |
+| 9 | Inspeccionar el mensaje almacenado | `scripts/ver-buzon.sh pedro` | Salida del script |
+
+`scripts/evidencias-config.sh` (PC 1) guarda las versiones, la configuración efectiva, los
+registros DNS, los límites de cada contenedor y qué secretos monta cada uno.
 
 ---
 
-## 11. Límites: qué NO protege este laboratorio
+## 8. Capturas de tráfico
 
-- **TLS no cifra el contenido almacenado** ni ofrece cifrado de extremo a extremo (actividad 9).
-  Para eso hace falta OpenPGP o S/MIME en los clientes (Thunderbird trae OpenPGP integrado).
-- **DKIM y DMARC dan autenticidad, no confidencialidad.** Un correo legítimo y firmado sigue
-  siendo legible por el administrador y por quien lo intercepte en un tramo sin TLS.
-- **El filtro de adjuntos solo mira el nombre**: no detecta un `.exe` renombrado a `.pdf`
-  ni archivos dentro de un `.zip`. Para eso harían falta un antivirus (ClamAV) o reglas de Rspamd.
-- **DMARC solo protege el dominio propio.** Un dominio parecido (`1ab.test`, `lab-test.com`) o un
-  nombre visible engañoso (`"Ana - Soporte" <x@otro.test>`) pasan DMARC: ahí entran la formación
-  de usuarios y que Thunderbird muestre la dirección completa del remitente.
-- **El tramo servidor-a-servidor real** usa TLS oportunista. Exigirlo requiere MTA-STS o DANE,
-  que dependen de DNS público: solo se documentan.
-- **Sin Redis** no hay aprendizaje bayesiano, greylisting ni límites de tasa en Rspamd. Los límites
-  de tasa de Postfix (`smtpd_client_*_rate_limit`) y el `auth_failure_delay` de Dovecot cubren lo básico.
-- **No hay reputación externa** (listas negras, fuzzy hashes): requieren Internet y están desactivadas.
+```bash
+# En clase, en el PC 2 (interfaz: ip -4 addr):
+sudo tcpdump -i <interfaz> -w evidencias/captura-587.pcapng host mail.lab.test and port 587
+# En casa (un solo PC):
+sudo tcpdump -i any -w evidencias/captura-587.pcapng port 587
+```
+
+Igual con `port 993` y `port 25`. Filtro de Wireshark: `smtp || tls`.
+
+- **587:** en claro solo el saludo, `EHLO`, `250-STARTTLS` (**sin AUTH**) y `STARTTLS`. Después, todo cifrado.
+- **993:** cifrado desde el primer paquete.
+- **25 (demo):** todo en claro, incluido el `From:` falso y el `554` final.
+- **Con TLS 1.3 el certificado viaja cifrado** y no aparece en la captura. Tomen sus datos de
+  `evidencias/pruebas-*/A-tls-valido-*.txt`.
+- **Opcional, descifrar:** `SSLKEYLOGFILE=$HOME/tls-keylog.txt thunderbird` y cargar el archivo en
+  Wireshark (*Preferencias → Protocols → TLS*). **No entreguen ese archivo.**
 
 ---
 
-## 12. Entregable
+## 9. Antivirus (opcional)
+
+Usa entre 1 y 1,5 GB de RAM extra. Actívenlo solo si el PC tiene 8 GB o más.
+
+```bash
+# PC 1: editar .env y poner
+COMPOSE_PROFILES=antivirus
+# luego (la primera vez descarga las firmas: varios minutos, necesita Internet)
+scripts/iniciar.sh
+docker compose logs clamav | head          # ¿firmas oficiales o solo EICAR?
+ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh   # prueba D9 con EICAR
+```
+
+- La prueba usa **EICAR**, el archivo de prueba estándar de los antivirus: es inofensivo.
+- Si la descarga de firmas oficiales falla al construir, la imagen igual queda lista con una
+  **firma local solo para EICAR**, y el log lo avisa. Para reintentar: `docker compose build --no-cache clamav`.
+- Las firmas quedan congeladas en la fecha de construcción, porque el laboratorio no tiene Internet.
+- Para desactivarlo: `COMPOSE_PROFILES=` en `.env`, `docker compose stop clamav` y `scripts/iniciar.sh`.
+
+---
+
+## 10. Entregable
 
 | Pide el taller | Dónde está |
 |---|---|
@@ -454,112 +366,94 @@ sudo tcpdump -i <interfaz> -w evidencias/captura-25.pcapng  host mail.lab.test a
 | Capturas | `evidencias/captura-*.pcapng` + pantallazos de Wireshark |
 | Correo recibido | Pantallazo en Thunderbird + `scripts/ver-buzon.sh pedro` |
 | Pruebas negativas | `evidencias/pruebas-*/reporte.html` y sus `.txt` |
-| Diagrama de tramos | Sección 7 (tabla de tramos) + diagrama en `entregable/` |
-| Seguridad (valor agregado) | `evidencias/demo-suplantacion-*.txt`, `evidencias/dkim-*/`, pruebas D |
-
-**Rúbrica:** servicio funcional (3) → C1, C5, C6 y Thunderbird · TLS y validación (3) → serie A,
-B1 y capturas · pruebas negativas (2) → A3, A4, B2–B5, C2–C4 · explicación de límites (2) →
-actividad 9, tabla de tramos y sección 11.
+| Diagrama de tramos | `docs/DISENO.md` (tabla de tramos) + diagrama en `entregable/` |
+| Seguridad adicional | `evidencias/demo-*.txt`, `evidencias/dkim-*/`, pruebas D |
 
 Antes de entregar o hacer `git push`:
 
 ```bash
-git status                          # no debe aparecer nada de secrets/, ca-privada/ ni .env
-grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir=ca-privada  # debe salir vacío
+git status       # no debe aparecer nada de secrets/, ca-privada/, certs/, dkim-publica/ ni .env
+grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir=ca-privada   # vacío
 ```
 
 ---
 
-## 13. Operación diaria y problemas frecuentes
+## 11. Comandos útiles y problemas frecuentes
 
-### Comandos útiles (PC 1)
-
-| Acción | Comando |
+| Acción (PC 1) | Comando |
 |---|---|
+| Arrancar o reparar todo | `scripts/iniciar.sh` |
+| Ver o cambiar el modo | `scripts/modo.sh estado` / `casa` / `clase` |
 | Aplicar cambios en `mail/config/` | `docker compose restart mail` |
 | Aplicar cambios en `rspamd/` | `docker compose restart rspamd` |
 | Aplicar cambios en `dns/config/` | `docker compose restart dns` |
-| Cambiar un `Dockerfile` o `entrypoint.sh` | `docker compose up -d --build` |
-| Ver logs en vivo | `docker compose logs -f mail rspamd dns` |
+| Cambios en un `Dockerfile` o `entrypoint.sh` | `scripts/iniciar.sh` (reconstruye) |
+| Logs en vivo | `docker compose logs -f mail rspamd dns` |
 | Estado de DMARC | `scripts/dmarc.sh estado` |
-| Cola de Postfix | `docker compose exec mail postqueue -p` |
-| Detener todo | `docker compose down` (los buzones se conservan) |
+| Detener todo (se conservan buzones) | `docker compose down` |
 | Empezar de cero (**borra los buzones**) | `docker compose down -v` |
-
-Tras reiniciar el PC 1: `docker compose up -d` y `sudo scripts/firewall-lab.sh`.
-Estado de DMARC: `docker compose restart dns` conserva el último estado (`on`/`off`);
-si el contenedor se recrea (`docker compose down` y `up`), vuelve a `on`. Compruébenlo siempre
-con `scripts/dmarc.sh estado` antes de una demo.
-
-### Problemas frecuentes
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| Un contenedor se detiene al arrancar | Faltan secretos o hay un error de sintaxis | `docker compose logs <servicio>`; generar lo que falte (sección 3.3) |
-| "falta secrets/dkim/taller3.txt" (o `.key`) | Se levantó antes de `crear-dkim.sh` y Docker creó carpetas vacías | `rm -r secrets/dkim/taller3.*` (solo si son carpetas) y `scripts/crear-dkim.sh` |
-| `LAB_IP` no definido | Falta el archivo `.env` | `cp .env.example .env` y editarlo |
-| El PC 2 no conecta a 587/993 | `/etc/hosts`, IP de `LAB_IP` incorrecta o firewall del PC 1 | `ping mail.lab.test`; `sudo ufw allow 587,993/tcp` si ufw está activo |
-| El PC 2 no conecta al 25 | `PC2_IP` incorrecta en `.env` | Corregir y repetir `sudo scripts/firewall-lab.sh` |
-| `451 4.7.1 Service unavailable` al enviar | Rspamd no está listo (el milter falla en modo `tempfail`) | Esperar unos segundos tras el arranque; `docker compose logs rspamd` |
-| Thunderbird advierte del certificado | CA no importada **en Thunderbird** | Sección 5, paso 1. No aceptar la excepción |
-| `535 Authentication failed` | Contraseña o usuario sin `@lab.test` | Revisar; regenerar con `crear-usuarios.sh` y `docker compose restart mail` |
-| D2/D3 dicen "250 queued" | DMARC desactivado | `scripts/dmarc.sh on` en el PC 1 |
-| La demo "antes" se rechaza igual | Rspamd trata la IP del PC 2 como local | Confirmar que `rspamd/override.d/options.inc` está montado: `docker compose exec rspamd rspamadm configdump options \| grep -A3 local_addrs` |
-| Tras reiniciar el PC, el contenedor puede salir a Internet | Las reglas de iptables se pierden | `sudo scripts/firewall-lab.sh` |
+| `Falta LAB_IP` / falta `.env` | No se eligió el modo | `scripts/modo.sh casa` (o `clase`) |
+| `iniciar.sh`: "Docker no responde" | El usuario no está en el grupo `docker` | `sudo usermod -aG docker $USER` y reiniciar sesión |
+| Un contenedor no queda "healthy" | Error de configuración o falta un secreto | `docker compose logs <servicio>`; repetir `scripts/iniciar.sh` |
+| `address already in use` en el puerto 25 | Hay otro servidor de correo en el PC (exim, postfix) | `sudo systemctl disable --now exim4 postfix` |
+| `comprobar-conexion.sh`: TLS no verifica | La CA local no es la del servidor | En clase, traer la `ca.crt` del PC 1 |
+| El PC 2 no llega a ningún puerto | Redes distintas o red que aísla equipos | Misma Wi-Fi o hotspot; `scripts/comprobar-conexion.sh` |
+| El PC 2 llega a 587/993 pero no al 25 | `PC2_IP` incorrecta en el PC 1 | PC 1: `scripts/modo.sh clase IP_CORRECTA` + `iniciar.sh` |
+| `451 4.7.1 Service unavailable` al enviar | Rspamd todavía arrancando (el correo se reintenta) | Esperar unos segundos |
+| Thunderbird advierte del certificado | CA no importada en **Thunderbird** o CA de otro equipo | Sección 4, paso 1. No aceptar la excepción |
+| `535 Authentication failed` | Contraseña o usuario sin `@lab.test` | Revisar; cambiar con `scripts/crear-usuarios.sh` |
+| `421 too many errors` o envíos frenados | Se acaba de ejecutar D10 (fuerza bruta) | Esperar 1 minuto |
+| `553 not owned by user` desde Thunderbird | Identidad con una dirección distinta de la cuenta | Usar la identidad de la propia cuenta |
+| D2/D3 dicen "250 queued" | DMARC desactivado | `scripts/dmarc.sh on` |
+| Tras reiniciar el PC, el contenedor puede salir a Internet | Las reglas de iptables se pierden | `scripts/iniciar.sh` |
 
 ---
 
-## 14. Estructura del repositorio
+## 12. Estructura del repositorio
 
 ```
 taller3_seguridad/
-├── docker-compose.yml           3 servicios, red fija 172.30.53.0/24, puertos ligados a LAB_IP
-├── .env.example                 Plantilla de LAB_IP y PC2_IP
-├── .gitignore                   Excluye .env, secrets/, ca-privada/, certs/, evidencias/, *.key, keylogs
-├── mail/
-│   ├── Dockerfile               Debian 12 + Postfix + Dovecot
-│   ├── entrypoint.sh            Instala config y secretos con permisos mínimos, valida y arranca
-│   └── config/
-│       ├── postfix/             main.cf, master.cf, virtual_mailboxes, sender_login_maps, mime_header_checks
-│       └── dovecot/             dovecot.conf (sintaxis 2.3)
-├── rspamd/
-│   ├── Dockerfile               Debian 12 + Rspamd
-│   ├── entrypoint.sh            Instala la clave DKIM, configtest y arranca
-│   ├── local.d/                 Milter, DKIM, DMARC, cabeceras, DNS, módulos desactivados
-│   └── override.d/              local_addrs (solo loopback)
-├── dns/
-│   ├── Dockerfile               Debian 12 + bind9
-│   ├── entrypoint.sh            Genera la zona, valida y arranca named
-│   ├── generar-zona.sh          Plantilla + LAB_IP + DKIM + DMARC on/off
-│   ├── lab-dmarc                Activa/desactiva el registro DMARC
-│   └── config/                  named.conf, lab.test.zone.plantilla
+├── docker-compose.yml          4 servicios (clamav opcional), red 172.30.53.0/24, límites y privilegios
+├── .env.example                Referencia; el .env real lo escribe scripts/modo.sh
+├── docs/DISENO.md              Decisiones, límites, tramos y rúbrica
+├── mail/                       Postfix + Dovecot (Dockerfile, entrypoint, config/)
+├── rspamd/                     local.d/, override.d/, rspamd.local.lua (regla propia), opcional/antivirus.conf
+├── dns/                        bind9: zona lab.test (SPF, DKIM, DMARC on/off)
+├── clamav/                     ClamAV opcional (firmas oficiales + respaldo EICAR)
 ├── scripts/
-│   ├── crear-ca.sh              PC 1 · CA + certificado con SAN mail.lab.test
-│   ├── crear-usuarios.sh        PC 1 · hashes SHA512-CRYPT de ana y pedro
-│   ├── crear-dkim.sh            PC 1 · clave DKIM y registro DNS
-│   ├── firewall-lab.sh          PC 1 · DOCKER-USER: sin salida + puerto 25 solo desde el PC 2
-│   ├── dmarc.sh                 PC 1 · on | off | estado
-│   ├── verificar-dkim.sh        PC 1 · firma intacta vs. alterada
-│   ├── ver-buzon.sh             PC 1 · actividad 9
-│   ├── evidencias-config.sh     PC 1 · versiones y configuración efectiva
-│   ├── probar.sh                PC 2 · 23 pruebas (A, B, C, D) + reporte HTML
-│   └── demo-suplantacion.sh     PC 2 · ataque por el 25 (total | cabecera)
-├── certs/  secrets/  ca-privada/  evidencias/     Generados localmente, fuera de Git
-└── entregable/                  Informe, diagrama y presentación
+│   ├── modo.sh                 casa | clase | cliente | estado
+│   ├── iniciar.sh              PC 1 · arranca o repara todo
+│   ├── comprobar-conexion.sh   Cualquier PC · ¿llego al servidor y confío en él?
+│   ├── probar.sh               Pruebas A–D + reporte HTML
+│   ├── demo-suplantacion.sh    Ataque por el 25 (total | cabecera)
+│   ├── demo-smuggling.sh       SMTP smuggling
+│   ├── dmarc.sh                PC 1 · on | off | estado
+│   ├── verificar-dkim.sh       PC 1 · firma intacta vs. alterada
+│   ├── rotar-dkim.sh           PC 1 · rotar | retirar | estado
+│   ├── renovar-certificado.sh  PC 1 · certificado TLS con clave nueva
+│   ├── crear-ca.sh  crear-usuarios.sh  crear-dkim.sh  lib-dkim.sh   (los usa iniciar.sh)
+│   ├── firewall-lab.sh         PC 1 · DOCKER-USER (lo usa iniciar.sh)
+│   ├── ver-buzon.sh            PC 1 · actividad 9
+│   └── evidencias-config.sh    PC 1 · versiones y configuración efectiva
+└── entregable/                 Informe, diagrama y presentación
+
+Generados en cada equipo, fuera de Git:
+  .env  certs/  secrets/mail/  secrets/dkim/  dkim-publica/  ca-privada/  evidencias/
 ```
 
-### Flujo de trabajo con Git
+### Flujo de Git
 
 ```bash
 git checkout main && git pull
 git checkout -b nombre/cambio
 # editar...
-git add -A && git status              # revisar que no aparezca nada de secrets/
-git commit -m "rspamd: rechazar por politica DMARC"
-git push -u origin nombre/cambio      # abrir el PR en GitHub; otro integrante lo revisa
-# Tras el merge, en el PC 1:
-git checkout main && git pull && docker compose up -d --build
+git add -A && git status        # nada de secrets/, certs/, .env
+git commit -m "descripción del cambio"
+git push -u origin nombre/cambio      # PR en GitHub, revisado por otro integrante
 ```
 
-> Todas las pruebas de suplantación se hacen **solo** con las cuentas ficticias de `lab.test`
-> y dentro de la red aislada del laboratorio.
+> Todas las pruebas de suplantación y ataque se hacen **solo** con las cuentas ficticias de
+> `lab.test` y dentro de la red del laboratorio.

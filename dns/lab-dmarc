@@ -8,8 +8,7 @@ ESTADO=/var/cache/bind/dmarc.estado
 case "${1:-estado}" in
   on|off)
     echo "$1" > "$ESTADO"
-    /usr/local/bin/generar-zona.sh
-    rndc reload lab.test >/dev/null
+    /usr/local/bin/lab-recargar >/dev/null
     sleep 1
     ;;
   estado) ;;

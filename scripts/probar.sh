@@ -8,6 +8,8 @@
 #    scripts/probar.sh                  -> solo pruebas sin credenciales
 #    LAB_USER=ana@lab.test scripts/probar.sh   -> pide la contraseña y
 #                                          agrega las pruebas autenticadas
+#    ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh -> + prueba EICAR
+#                                          (solo si el perfil antivirus está activo)
 #  Salida: evidencias/pruebas-FECHA/ (salida cruda de cada prueba)
 #          evidencias/pruebas-FECHA/reporte.html (tabla para el informe)
 # =====================================================================
@@ -252,11 +254,73 @@ if [ -n "$LAB_USER" ]; then
   sleep 3
   imap_tls "a1 LOGIN $LAB_USER $LAB_PASS" "a2 SELECT INBOX" \
     "a3 FETCH * (BODY.PEEK[HEADER.FIELDS (SUBJECT DKIM-SIGNATURE)])" "a4 LOGOUT" >> "$f"
-  grep -q "$ASUNTO" "$f" && grep -q "d=lab.test" "$f" && grep -q "s=taller3" "$f"; e=$?
-  registrar "D6" "Correo enviado por 587 llega con firma DKIM (d=lab.test, s=taller3)" "DKIM-Signature presente" $e "$f" \
+  grep -q "$ASUNTO" "$f" && grep -q "d=lab.test" "$f" && grep -q "s=taller3-" "$f"; e=$?
+  registrar "D6" "Correo enviado por 587 llega con firma DKIM (d=lab.test, s=taller3-N)" "DKIM-Signature presente" $e "$f" \
     "$(grep -m1 -oE 'DKIM-Signature: v=1; a=[^;]+; c=[^;]+; d=[^;]+; s=[^;]+;?' "$f")"
 
-  # No dejar credenciales en las evidencias
+  # D7: autenticado como LAB_USER pero con From: visible de otro usuario
+  f=$OUT/D-from-distinto-usuario.txt
+  smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
+    "From: <$OTRO>" "To: <$OTRO>" "Subject: Suplantacion interna $TS" "" "Mensaje con From: falso." "." "QUIT" > "$f"
+  grep -qE "^5[0-9][0-9]" "$f" && ! grep -qE "^250 .*queued" "$f"; e=$?
+  registrar "D7" "Autenticado como $LAB_USER con From: $OTRO: rechazado" "554 Rechazado" $e "$f" \
+    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
+
+  # D9 (opcional): antivirus con el archivo de prueba estándar EICAR (inofensivo)
+  if [ "${ANTIVIRUS:-0}" = 1 ]; then
+    f=$OUT/D-antivirus-eicar.txt
+    smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
+      "From: <$LAB_USER>" "To: <$OTRO>" "Subject: Prueba antivirus $TS" "MIME-Version: 1.0" \
+      'Content-Type: multipart/mixed; boundary="LIMITE"' "" "--LIMITE" "Content-Type: text/plain" "" \
+      "Adjunto EICAR (archivo de prueba estandar de antivirus)." "--LIMITE" \
+      'Content-Type: application/octet-stream; name="eicar.txt"' \
+      'Content-Disposition: attachment; filename="eicar.txt"' "Content-Transfer-Encoding: base64" "" \
+      "WDVPIVAlQEFQWzRcUFpYNTQoUF4pN0NDKTd9JEVJQ0FSLVNUQU5EQVJELUFOVElWSVJVUy1URVNULUZJTEUhJEgrSCo=" \
+      "--LIMITE--" "." "QUIT" > "$f"
+    grep -qE "^5[0-9][0-9]" "$f" && ! grep -qE "^250 .*queued" "$f"; e=$?
+    registrar "D9" "Antivirus: adjunto EICAR rechazado (ClamAV)" "554 Rechazado" $e "$f" \
+      "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
+  fi
+fi
+
+# D8: SMTP smuggling. Se esconde un segundo correo detrás de un fin de DATA
+# falso (<LF>.<CR><LF>). Protegido: Postfix solo acepta <CR><LF>.<CR><LF>,
+# así que hay UN solo correo. Vulnerable: aparecerían DOS "queued".
+f=$OUT/D-smtp-smuggling.txt
+{
+  sleep 1
+  for c in "EHLO pc2.lab.test" "MAIL FROM:<alguien@otro.test>" "RCPT TO:<pedro@lab.test>" "DATA"; do
+    printf '%s\r\n' "$c"; sleep 1
+  done
+  printf 'From: <alguien@otro.test>\r\nTo: <pedro@lab.test>\r\nSubject: Correo visible %s\r\n\r\nTexto legitimo.\r\n' "$TS"
+  printf '\n.\r\nMAIL FROM:<ventas@otro.test>\r\nRCPT TO:<pedro@lab.test>\r\nDATA\r\n'
+  printf 'From: <ventas@otro.test>\r\nSubject: Correo de CONTRABANDO %s\r\n\r\nNo deberia existir como correo aparte.\r\n' "$TS"
+  printf '\r\n.\r\n'
+  sleep 3; printf 'QUIT\r\n'; sleep 1
+} | timeout 40 nc -w 8 "$HOST" 25 > "$f" 2>&1
+n=$(grep -cE "^250 .*queued" "$f")
+[ "$n" -eq 1 ]; e=$?
+registrar "D8" "SMTP smuggling: el correo escondido NO se acepta como un segundo mensaje" "1 solo 250 queued" $e "$f" \
+  "mensajes aceptados: $n (vulnerable = 2)"
+
+# D10: fuerza bruta. Varios AUTH con contraseña errónea en una sesión:
+# tras 6 errores Postfix corta la conexión. Se ejecuta AL FINAL porque
+# deja a este equipo frenado durante ~1 minuto.
+f=$OUT/D-fuerza-bruta.txt
+MALA=$(printf '\0%s\0%s' "${LAB_USER:-ana@lab.test}" "contrasena-incorrecta" | base64 -w0)
+# Cada fallo tarda ~2-4 s (retraso de Dovecot + espera de Postfix): se deja tiempo
+{ sleep 2; printf 'EHLO atacante.lab.test\r\n'; sleep 1
+  for i in 1 2 3 4 5 6 7 8; do printf 'AUTH PLAIN %s\r\n' "$MALA"; sleep 5; done
+  printf 'QUIT\r\n'; sleep 1
+} | timeout 70 openssl s_client -starttls smtp -connect "$HOST:587" -servername "$HOST" \
+    -CAfile "$CA" -verify_hostname "$HOST" -verify_return_error -quiet > "$f" 2>&1
+grep -qiE "too many|421" "$f"; e=$?
+registrar "D10" "Fuerza bruta: tras varios AUTH fallidos el servidor corta la sesión" "421 too many errors" $e "$f" \
+  "$(grep -iE 'too many|^421' "$f" | head -1) (fallos 535: $(grep -c '^535' "$f"))"
+echo "${GRIS}(D10 deja frenado a este equipo ~1 minuto: esperen antes de usar Thunderbird)${NORMAL}"
+
+# No dejar credenciales en las evidencias
+if [ -n "$LAB_USER" ]; then
   sed -i "s#$AUTH#[credencial-oculta]#g; s#$LAB_PASS#[clave-oculta]#g" "$OUT"/*.txt
 fi
 

@@ -1,18 +1,38 @@
 #!/bin/bash
+# Arranque de Rspamd: instala configuración y SOLO la clave DKIM activa.
 set -euo pipefail
 
-KEY_SRC=/run/lab-dkim/taller3.key
-KEY_DST=/var/lib/rspamd/dkim/lab.test.taller3.key
+CFG=/etc/lab-rspamd            # carpeta rspamd/ del repositorio (solo lectura)
+PRIV=/run/lab-dkim/privada     # secrets/dkim/   (claves privadas)
+PUB=/run/lab-dkim/publica      # dkim-publica/   (selector activo)
 
-if [ ! -f "$KEY_SRC" ]; then
-  echo "ERROR: falta secrets/dkim/taller3.key. Ejecuta primero scripts/crear-dkim.sh"
-  echo "(si Docker creó una carpeta vacía con ese nombre, bórrala: rm -r secrets/dkim/taller3.key)"
+SEL=$(cat "$PUB/activo" 2>/dev/null || true)
+if [ -z "$SEL" ] || [ ! -f "$PRIV/$SEL.key" ]; then
+  echo "ERROR: falta la clave DKIM activa ('${SEL:-ninguna}')."
+  echo "Ejecuta scripts/iniciar.sh (o scripts/crear-dkim.sh) en el PC 1."
   exit 1
 fi
 
-# Clave DKIM legible solo por el usuario de Rspamd
+# --- Configuración
+mkdir -p /etc/rspamd/local.d /etc/rspamd/override.d
+cp "$CFG"/local.d/*    /etc/rspamd/local.d/
+cp "$CFG"/override.d/* /etc/rspamd/override.d/
+cp "$CFG"/rspamd.local.lua /etc/rspamd/rspamd.local.lua
+rm -f /etc/rspamd/local.d/antivirus.conf
+if [[ "${PERFILES:-}" == *antivirus* ]]; then
+  cp "$CFG"/opcional/antivirus.conf /etc/rspamd/local.d/antivirus.conf
+  echo "Antivirus (ClamAV): ACTIVADO"
+else
+  echo "Antivirus (ClamAV): desactivado (perfil opcional)"
+fi
+
+# --- Clave DKIM: solo la activa, legible solo por el usuario de Rspamd
 install -d -m 0750 -o _rspamd -g _rspamd /var/lib/rspamd/dkim
-install -m 0600 -o _rspamd -g _rspamd "$KEY_SRC" "$KEY_DST"
+rm -f /var/lib/rspamd/dkim/*.key
+install -m 0600 -o _rspamd -g _rspamd "$PRIV/$SEL.key" "/var/lib/rspamd/dkim/lab.test.$SEL.key"
+echo "lab.test $SEL" > /var/lib/rspamd/dkim/selectores.map
+chown _rspamd:_rspamd /var/lib/rspamd/dkim/selectores.map
+echo "DKIM: firmando con el selector $SEL"
 
 echo "=== Versión ==="
 rspamd --version | head -1

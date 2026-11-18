@@ -94,3 +94,25 @@ milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
 
 # --- Adjuntos peligrosos (solo mira el NOMBRE del archivo, ver límites)
 mime_header_checks = regexp:/etc/postfix/mime_header_checks
+
+# --- SMTP smuggling (CVE-2023-51764). En Postfix < 3.9 está DESACTIVADO por
+#     defecto. "normalize" exige el fin de DATA estándar <CR><LF>.<CR><LF>.
+#     Requiere Postfix >= 3.7.10 (Debian 12 trae 3.7.11): en versiones
+#     anteriores "normalize" provoca un error fatal.
+smtpd_forbid_bare_newline = normalize
+smtpd_forbid_bare_newline_exclusions = $mynetworks
+smtpd_forbid_unauth_pipelining = yes
+# Sin CHUNKING (BDAT): otra vía usada en variantes del ataque
+smtpd_discard_ehlo_keywords = chunking, silent-discard
+
+# --- Fuerza bruta y agotamiento de recursos
+# Máximo de conexiones SIMULTÁNEAS por cliente
+smtpd_client_connection_count_limit = 10
+# Tras 3 errores, el servidor responde cada vez más lento; tras 6, corta la sesión
+smtpd_soft_error_limit = 3
+smtpd_hard_error_limit = 6
+smtpd_error_sleep_time = 1s
+# Comandos "basura" (NOOP, RSET, VRFY...) antes de cortar
+smtpd_junk_command_limit = 20
+# Destinatarios por mensaje (evita usar el servidor para envíos masivos)
+smtpd_recipient_limit = 50

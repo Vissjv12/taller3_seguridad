@@ -1,0 +1,6 @@
+#!/bin/bash
+# Regenera la zona lab.test (DKIM publicados + estado DMARC) y la recarga sin reiniciar.
+set -euo pipefail
+/usr/local/bin/generar-zona.sh
+rndc reload lab.test >/dev/null
+echo "Zona lab.test recargada."
