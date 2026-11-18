@@ -16,7 +16,7 @@ if [ "$falta" -eq 1 ]; then
 fi
 
 # --- Configuración de Postfix (propiedad de root, como exige postfix check)
-for f in main.cf master.cf virtual_mailboxes sender_login_maps; do
+for f in main.cf master.cf virtual_mailboxes sender_login_maps mime_header_checks; do
   install -m 0644 -o root -g root "$CFG/postfix/$f" "/etc/postfix/$f"
 done
 

@@ -1,0 +1,6 @@
+# =====================================================================
+#  Rechazo de adjuntos por extensión (las tablas regexp ignoran mayúsculas).
+#  LÍMITE: solo revisa el nombre declarado en las cabeceras MIME. No detecta
+#  un .exe renombrado a .pdf ni archivos dentro de un .zip.
+# =====================================================================
+/^Content-(Disposition|Type):.*name[[:space:]]*=[[:space:]]*"?[^"]*\.(ade|adp|app|bat|chm|cmd|com|cpl|exe|hta|ins|iso|isp|jar|js|jse|lnk|msc|msi|msp|mst|pif|ps1|reg|scr|sct|shb|shs|vb|vbe|vbs|wsc|wsf|wsh)"?[[:space:]]*(;|$)/ REJECT 5.7.1 Adjunto peligroso no permitido (.$2)

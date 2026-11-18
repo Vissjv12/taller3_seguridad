@@ -1,6 +1,7 @@
 #!/bin/bash
 # =====================================================================
-#  Pruebas positivas y negativas del Taller 3. Ejecutar desde el PC 2.
+#  Pruebas positivas y negativas del Taller 3 (series A, B, C y D).
+#  Ejecutar desde el PC 2 (su IP es la única autorizada en el puerto 25).
 #  Requisitos: openssl, netcat-openbsd (nc), y certs/ca.crt del repositorio.
 #
 #  Uso:
@@ -63,6 +64,11 @@ tls_info() {  # tls_info puerto [opciones extra de s_client...]
 smtp_claro() {  # comandos SMTP sin TLS por el 587
   { sleep 1; for c in "$@"; do printf '%s\r\n' "$c"; sleep 1; done; } \
     | timeout 20 nc -w 5 "$HOST" 587 2>&1
+}
+
+smtp25() {  # comandos SMTP en claro por el 25 (como otro servidor de Internet)
+  { sleep 1; for c in "$@"; do printf '%s\r\n' "$c"; sleep 1; done; } \
+    | timeout 40 nc -w 8 "$HOST" 25 2>&1
 }
 
 smtp_tls() {  # comandos SMTP dentro de STARTTLS (con validación completa)
@@ -184,10 +190,74 @@ if [ -n "$LAB_USER" ]; then
   grep -qE "^250 .*queued" "$f"; e=$?
   registrar "C6" "Envío legítimo $LAB_USER -> $OTRO" "250 queued" $e "$f" \
     "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | head -1)"
-  # No dejar la credencial en las evidencias
-  sed -i "s#$AUTH#[credencial-oculta]#g; s#$LAB_PASS#[clave-oculta]#g" "$OUT"/C-*.txt
 else
   echo "${GRIS}(Pruebas autenticadas omitidas: usen LAB_USER=ana@lab.test scripts/probar.sh)${NORMAL}"
+fi
+
+
+# ===== Bloque D: fase de seguridad (puerto 25, DMARC, adjuntos, DKIM) ===
+# Requiere: puerto 25 publicado, el PC 2 autorizado en firewall-lab.sh y
+# DMARC activo (scripts/dmarc.sh on en el PC 1). D2 y D3 FALLAN a propósito
+# si DMARC está desactivado: esa es la demo "antes".
+ID_MSG=$(date +%s%N)
+
+f=$OUT/D-25-remitente-ajeno.txt
+smtp25 "EHLO pc2.lab.test" "MAIL FROM:<alguien@otro.test>" "RCPT TO:<pedro@lab.test>" \
+  "DATA" "From: Alguien <alguien@otro.test>" "To: <pedro@lab.test>" "Subject: Correo de otro dominio $TS" \
+  "Message-ID: <d1-$ID_MSG@otro.test>" "Date: $(date -R)" "" "Correo ficticio de un dominio sin DMARC." "." "QUIT" > "$f"
+grep -qE "^250 .*queued" "$f"; e=$?
+registrar "D1" "Puerto 25 recibe correo de un dominio ajeno (control)" "250 queued" $e "$f" \
+  "$(grep -E '^250 .*queued|^[45][0-9][0-9]' "$f" | head -1)"
+
+f=$OUT/D-25-suplantacion-total.txt
+smtp25 "EHLO atacante.example" "MAIL FROM:<ana@lab.test>" "RCPT TO:<pedro@lab.test>" \
+  "DATA" "From: Ana <ana@lab.test>" "To: <pedro@lab.test>" "Subject: Urgente: confirma tu clave $TS" \
+  "Message-ID: <d2-$ID_MSG@atacante.example>" "Date: $(date -R)" "" "Mensaje FALSO de prueba (laboratorio)." "." "QUIT" > "$f"
+grep -qE "^5[0-9][0-9].*(politica|policy|rejected|Rechazado)" "$f"; e=$?
+registrar "D2" "Suplantación por el 25 (sobre y From: ana@lab.test) rechazada por DMARC" "554 Rechazado (DMARC)" $e "$f" \
+  "$(grep -E '^250 .*queued|^[45][0-9][0-9]' "$f" | tail -1)"
+
+f=$OUT/D-25-suplantacion-cabecera.txt
+smtp25 "EHLO atacante.example" "MAIL FROM:<atacante@otro.test>" "RCPT TO:<pedro@lab.test>" \
+  "DATA" "From: Ana <ana@lab.test>" "To: <pedro@lab.test>" "Subject: Factura pendiente $TS" \
+  "Message-ID: <d3-$ID_MSG@atacante.example>" "Date: $(date -R)" "" "Mensaje FALSO de prueba (laboratorio)." "." "QUIT" > "$f"
+grep -qE "^5[0-9][0-9].*(politica|policy|rejected|Rechazado)" "$f"; e=$?
+registrar "D3" "Solo el From: visible falsificado (sobre ajeno): rechazado por DMARC" "554 Rechazado (DMARC)" $e "$f" \
+  "$(grep -E '^250 .*queued|^[45][0-9][0-9]' "$f" | tail -1)"
+
+if [ -n "$LAB_USER" ]; then
+  adjunto() {  # adjunto extensión archivo-de-salida
+    smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
+      "From: <$LAB_USER>" "To: <$OTRO>" "Subject: Adjunto .$1 $TS" "MIME-Version: 1.0" \
+      'Content-Type: multipart/mixed; boundary="LIMITE"' "" "--LIMITE" "Content-Type: text/plain; charset=utf-8" "" \
+      "Adjunto de prueba." "--LIMITE" "Content-Type: application/octet-stream; name=\"factura.$1\"" \
+      "Content-Disposition: attachment; filename=\"factura.$1\"" "Content-Transfer-Encoding: base64" "" \
+      "UHJ1ZWJhIGRlIGxhYm9yYXRvcmlv" "--LIMITE--" "." "QUIT" > "$2"
+  }
+  f=$OUT/D-adjunto-exe.txt; adjunto exe "$f"
+  grep -qi "Adjunto peligroso" "$f"; e=$?
+  registrar "D4" "Adjunto .exe rechazado (mime_header_checks)" "550 Adjunto peligroso" $e "$f" \
+    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
+
+  f=$OUT/D-adjunto-pdf.txt; adjunto pdf "$f"
+  grep -qE "^250 .*queued" "$f"; e=$?
+  registrar "D5" "Adjunto .pdf aceptado (control)" "250 queued" $e "$f" \
+    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
+
+  # D6: lo enviado por 587 sale firmado con DKIM. Se lo envía a sí mismo y lo lee por IMAP.
+  ASUNTO="Firma DKIM $ID_MSG"
+  f=$OUT/D-dkim-firma.txt
+  smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$LAB_USER>" "DATA" \
+    "From: <$LAB_USER>" "To: <$LAB_USER>" "Subject: $ASUNTO" "" "Mensaje para comprobar la firma DKIM." "." "QUIT" > "$f"
+  sleep 3
+  imap_tls "a1 LOGIN $LAB_USER $LAB_PASS" "a2 SELECT INBOX" \
+    "a3 FETCH * (BODY.PEEK[HEADER.FIELDS (SUBJECT DKIM-SIGNATURE)])" "a4 LOGOUT" >> "$f"
+  grep -q "$ASUNTO" "$f" && grep -q "d=lab.test" "$f" && grep -q "s=taller3" "$f"; e=$?
+  registrar "D6" "Correo enviado por 587 llega con firma DKIM (d=lab.test, s=taller3)" "DKIM-Signature presente" $e "$f" \
+    "$(grep -m1 -oE 'DKIM-Signature: v=1; a=[^;]+; c=[^;]+; d=[^;]+; s=[^;]+;?' "$f")"
+
+  # No dejar credenciales en las evidencias
+  sed -i "s#$AUTH#[credencial-oculta]#g; s#$LAB_PASS#[clave-oculta]#g" "$OUT"/*.txt
 fi
 
 echo
@@ -202,7 +272,7 @@ cat > "$OUT/reporte.html" <<EOF
  th{background:#f2f2f2;text-align:left} tr.ok td:nth-child(4){color:#137333} tr.ko td:nth-child(4){color:#b3261e}
  code{font-size:.8rem;white-space:pre-wrap} .res{font-size:1.4rem;margin:1rem 0}
 </style></head><body>
-<h1>Taller 3: pruebas de correo con TLS</h1>
+<h1>Taller 3: pruebas de correo con TLS y seguridad</h1>
 <p>Servidor: <b>$HOST</b> · Fecha: $(date) · Equipo cliente: $(hostname)</p>
 <p class="res"><b>$OK de $TOTAL</b> pruebas pasan</p>
 <table><tr><th>ID</th><th>Prueba</th><th>Esperado</th><th>Resultado</th><th>Evidencia</th></tr>

@@ -1,21 +1,65 @@
 name: taller3-correo
 
+# Red del laboratorio
+#   172.30.53.10  mail-lab    Postfix + Dovecot
+#   172.30.53.11  rspamd-lab  Rspamd (milter: DKIM, SPF, DMARC, spam)
+#   172.30.53.53  dns-lab     bind9 (zona lab.test con SPF, DKIM y DMARC)
+
 services:
+  dns:
+    build: ./dns
+    image: taller3/dns:local
+    container_name: dns-lab
+    hostname: ns.lab.test
+    environment:
+      LAB_IP: ${LAB_IP:?Define LAB_IP en el archivo .env}
+    networks:
+      lab:
+        ipv4_address: 172.30.53.53
+    volumes:
+      - ./dns/config:/etc/lab-dns:ro
+      # Solo el registro PÚBLICO de DKIM (la clave privada no entra aquí)
+      - ./secrets/dkim/taller3.txt:/run/lab-dkim/taller3.txt:ro
+    restart: unless-stopped
+    # Sin "ports": el DNS no se publica fuera de la red de Docker
+
+  rspamd:
+    build: ./rspamd
+    image: taller3/rspamd:local
+    container_name: rspamd-lab
+    hostname: rspamd.lab.test
+    depends_on:
+      - dns
+    dns:
+      - 172.30.53.53
+    networks:
+      lab:
+        ipv4_address: 172.30.53.11
+    volumes:
+      - ./rspamd/local.d:/etc/rspamd/local.d:ro
+      - ./rspamd/override.d:/etc/rspamd/override.d:ro
+      # Solo la clave PRIVADA de DKIM
+      - ./secrets/dkim/taller3.key:/run/lab-dkim/taller3.key:ro
+    restart: unless-stopped
+
   mail:
     build: ./mail
     image: taller3/mail:local
     container_name: mail-lab
     hostname: mail.lab.test
+    depends_on:
+      - rspamd
     networks:
       lab:
         ipv4_address: 172.30.53.10
     ports:
-      # Publicados SOLO en la IP del PC 1 dentro de la red del laboratorio
-      # (definida en .env). Así no quedan expuestos en otras interfaces.
-      - "${LAB_IP:?Define LAB_IP en el archivo .env}:587:587"
+      # Publicados SOLO en la IP del PC 1 dentro de la red del laboratorio.
+      - "${LAB_IP}:587:587"
       - "${LAB_IP}:993:993"
-      # Puerto 25: solo para la demo de suplantación de la fase de seguridad
-      # - "${LAB_IP}:25:25"
+      # Puerto 25 (recepción servidor-a-servidor, demo de suplantación).
+      # ufw NO filtra puertos de Docker: lo limita scripts/firewall-lab.sh
+      # (cadena DOCKER-USER) para que solo el PC 2 pueda usarlo.
+      - "${LAB_IP}:25:25"
     volumes:
       - ./mail/config:/etc/lab-config:ro
       - ./certs/mail.crt:/etc/ssl/lab/mail.crt:ro
@@ -25,7 +69,7 @@ services:
 
 networks:
   lab:
-    # Subred fija: la usa scripts/bloquear-salida.sh
+    # Subred fija: la usan las IP de arriba y scripts/firewall-lab.sh
     ipam:
       config:
         - subnet: 172.30.53.0/24

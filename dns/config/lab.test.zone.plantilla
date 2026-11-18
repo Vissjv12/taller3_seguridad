@@ -1,0 +1,23 @@
+; =====================================================================
+;  Zona lab.test (plantilla). generar-zona.sh reemplaza:
+;    __SERIAL__  número de serie (cambia en cada regeneración)
+;    __LAB_IP__  IP del PC 1 (variable LAB_IP del archivo .env)
+;  y agrega al final el registro DKIM y, si está activado, el DMARC.
+; =====================================================================
+$TTL 60
+@   IN SOA ns.lab.test. hostmaster.lab.test. (
+        __SERIAL__ ; serie
+        60         ; refresh
+        30         ; retry
+        600        ; expire
+        10 )       ; TTL negativo bajo: los cambios de DMARC se ven al instante
+
+    IN NS  ns.lab.test.
+    IN MX  10 mail.lab.test.
+
+; --- SPF: solo la IP del PC 1 puede enviar correo de lab.test.
+;     "-all" = cualquier otra IP es un fallo duro (fail), no "softfail".
+    IN TXT "v=spf1 ip4:__LAB_IP__ -all"
+
+ns    IN A 172.30.53.53
+mail  IN A __LAB_IP__

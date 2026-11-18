@@ -1,0 +1,22 @@
+#!/bin/bash
+# Activa o desactiva la publicación del registro DMARC de lab.test.
+# Uso (dentro del contenedor): lab-dmarc on | off | estado
+# Desde el PC 1 se usa a través de: scripts/dmarc.sh on|off|estado
+set -euo pipefail
+ESTADO=/var/cache/bind/dmarc.estado
+
+case "${1:-estado}" in
+  on|off)
+    echo "$1" > "$ESTADO"
+    /usr/local/bin/generar-zona.sh
+    rndc reload lab.test >/dev/null
+    sleep 1
+    ;;
+  estado) ;;
+  *) echo "Uso: lab-dmarc on|off|estado"; exit 2 ;;
+esac
+
+echo "DMARC: $(cat "$ESTADO" 2>/dev/null || echo on)"
+echo -n "Registro publicado: "
+r=$(dig @127.0.0.1 +short TXT _dmarc.lab.test)
+echo "${r:-(ninguno)}"
