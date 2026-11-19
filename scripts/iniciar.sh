@@ -21,7 +21,7 @@ docker compose version >/dev/null 2>&1 || fallo "falta Docker Compose v2 (paquet
 docker info >/dev/null 2>&1 || fallo "Docker no responde. ¿Están en el grupo docker? (sudo usermod -aG docker \$USER y reiniciar sesión)"
 [ -f .env ] || fallo "falta .env. Ejecuten primero: scripts/modo.sh casa  (o: scripts/modo.sh clase)"
 set -a; . ./.env; set +a
-echo "Modo: ${MODO:-?}   LAB_IP: $LAB_IP   PC2_IP: ${PC2_IP:-(ninguna)}   Perfiles: ${COMPOSE_PROFILES:-(ninguno)}"
+echo "Modo: ${MODO:-?}   LAB_IP: $LAB_IP   PC2_IP: ${PC2_IP:-(ninguna)}"
 chmod +x scripts/*.sh 2>/dev/null || true
 
 paso "2/5 Secretos (solo se crean los que faltan)"
@@ -32,7 +32,7 @@ paso "2/5 Secretos (solo se crean los que faltan)"
 echo "CA: $(openssl x509 -in certs/ca.crt -noout -subject | sed 's/.*CN *= *//')"
 echo "Certificado del servidor válido hasta: $(openssl x509 -in certs/mail.crt -noout -enddate | cut -d= -f2)"
 
-paso "3/5 Contenedores (la primera vez tarda varios minutos)"
+paso "3/5 Contenedores (la primera vez descarga las firmas de ClamAV: varios minutos)"
 if ! docker compose up -d --build --wait; then
   docker compose ps
   fallo "algún contenedor no arrancó. Revisen: docker compose logs <servicio>"

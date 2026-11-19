@@ -3,7 +3,7 @@ name: taller3-correo
 # Red del laboratorio
 #   172.30.53.10  mail-lab    Postfix + Dovecot
 #   172.30.53.11  rspamd-lab  Rspamd (milter: DKIM, SPF, DMARC, spam, reglas propias)
-#   172.30.53.12  clamav-lab  ClamAV (OPCIONAL: COMPOSE_PROFILES=antivirus en .env)
+#   172.30.53.12  clamav-lab  ClamAV (antivirus obligatorio; Rspamd depende de él)
 #   172.30.53.53  dns-lab     bind9 (zona lab.test con SPF, DKIM y DMARC)
 #
 # Mínimo privilegio: cada contenedor monta SOLO los secretos que usa.
@@ -43,10 +43,10 @@ services:
     image: taller3/rspamd:local
     container_name: rspamd-lab
     hostname: rspamd.lab.test
-    environment:
-      PERFILES: ${COMPOSE_PROFILES:-}
     depends_on:
       dns:
+        condition: service_healthy
+      clamav:
         condition: service_healthy
     dns:
       - 172.30.53.53
@@ -107,8 +107,7 @@ services:
     restart: unless-stopped
 
   clamav:
-    # OPCIONAL: se levanta solo con COMPOSE_PROFILES=antivirus en .env
-    profiles: [antivirus]
+    # Antivirus obligatorio: sin él Rspamd no arranca y el correo no entra.
     build: ./clamav
     image: taller3/clamav:local
     container_name: clamav-lab

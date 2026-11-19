@@ -25,10 +25,7 @@ poner_hosts() {  # poner_hosts IP
   echo "/etc/hosts: mail.lab.test -> $1"
 }
 
-perfiles_actuales() { grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | cut -d= -f2- || true; }
-
 escribir_env() {  # escribir_env MODO LAB_IP PC2_IP
-  local perf; perf=$(perfiles_actuales)
   cat > .env <<EOF
 # Generado por scripts/modo.sh $1 ($(date '+%Y-%m-%d %H:%M'))
 MODO=$1
@@ -36,11 +33,9 @@ MODO=$1
 LAB_IP=$2
 # IP del PC 2: la única que puede usar el puerto 25 (vacío en casa)
 PC2_IP=$3
-# Módulos opcionales. Para el antivirus: COMPOSE_PROFILES=antivirus
-COMPOSE_PROFILES=$perf
 EOF
   chmod 600 .env
-  echo ".env: MODO=$1  LAB_IP=$2  PC2_IP=${3:-(ninguna)}  COMPOSE_PROFILES=${perf:-(ninguno)}"
+  echo ".env: MODO=$1  LAB_IP=$2  PC2_IP=${3:-(ninguna)}"
 }
 
 case "${1:-estado}" in
@@ -77,7 +72,7 @@ case "${1:-estado}" in
     ;;
 
   estado)
-    if [ -f .env ]; then grep -E '^(MODO|LAB_IP|PC2_IP|COMPOSE_PROFILES)=' .env; else echo "Sin .env (ejecuten modo.sh casa o modo.sh clase)"; fi
+    if [ -f .env ]; then grep -E '^(MODO|LAB_IP|PC2_IP)=' .env; else echo "Sin .env (ejecuten modo.sh casa o modo.sh clase)"; fi
     echo "/etc/hosts: $(grep 'mail\.lab\.test' /etc/hosts || echo '(sin entrada para mail.lab.test)')"
     ;;
 

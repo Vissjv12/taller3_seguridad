@@ -18,13 +18,9 @@ mkdir -p /etc/rspamd/local.d /etc/rspamd/override.d
 cp "$CFG"/local.d/*    /etc/rspamd/local.d/
 cp "$CFG"/override.d/* /etc/rspamd/override.d/
 cp "$CFG"/rspamd.local.lua /etc/rspamd/rspamd.local.lua
-rm -f /etc/rspamd/local.d/antivirus.conf
-if [[ "${PERFILES:-}" == *antivirus* ]]; then
-  cp "$CFG"/opcional/antivirus.conf /etc/rspamd/local.d/antivirus.conf
-  echo "Antivirus (ClamAV): ACTIVADO"
-else
-  echo "Antivirus (ClamAV): desactivado (perfil opcional)"
-fi
+# El antivirus es obligatorio: local.d/antivirus.conf + force_actions. Si clamd
+# no responde, Rspamd devuelve 451 y el correo se reintenta (nunca entra sin analizar).
+echo "Antivirus (ClamAV): integrado (sin clamd => 451, no se acepta sin analizar)"
 
 # --- Clave DKIM: solo la activa, legible solo por el usuario de Rspamd
 install -d -m 0750 -o _rspamd -g _rspamd /var/lib/rspamd/dkim

@@ -12,7 +12,7 @@ OUT=evidencias/config-efectiva-$(date +%Y%m%d-%H%M).txt
   docker exec mail-lab openssl version
   docker exec rspamd-lab rspamd --version | head -1
   docker exec dns-lab named -v
-  docker exec clamav-lab clamd --version 2>/dev/null || echo "ClamAV: perfil opcional no activo"
+  docker exec clamav-lab clamd --version 2>/dev/null || echo "ClamAV: no responde"
   echo "Modo: $(grep -E '^MODO=' .env | cut -d= -f2)  LAB_IP: $(grep -E '^LAB_IP=' .env | cut -d= -f2)"
   echo
   echo "### postconf -n (main.cf efectivo)"
@@ -42,7 +42,7 @@ OUT=evidencias/config-efectiva-$(date +%Y%m%d-%H%M).txt
   docker exec rspamd-lab rspamadm configdump options | grep -A4 local_addrs
   echo
   echo "### Límites de recursos y privilegios de los contenedores"
-  for c in dns-lab rspamd-lab mail-lab; do
+  for c in dns-lab rspamd-lab mail-lab clamav-lab; do
     docker inspect -f '{{.Name}}: mem={{.HostConfig.Memory}} cpus={{.HostConfig.NanoCpus}} pids={{.HostConfig.PidsLimit}} capdrop={{.HostConfig.CapDrop}} capadd={{.HostConfig.CapAdd}} secopt={{.HostConfig.SecurityOpt}}' $c
   done
   echo
