@@ -8,8 +8,6 @@
 #    scripts/probar.sh                  -> solo pruebas sin credenciales
 #    LAB_USER=ana@lab.test scripts/probar.sh   -> pide la contraseña y
 #                                          agrega las pruebas autenticadas
-#    ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh -> + prueba EICAR
-#                                          (solo si el perfil antivirus está activo)
 #  Salida: evidencias/pruebas-FECHA/ (salida cruda de cada prueba)
 #          evidencias/pruebas-FECHA/reporte.html (tabla para el informe)
 # =====================================================================
@@ -241,9 +239,20 @@ if [ -n "$LAB_USER" ]; then
       "UHJ1ZWJhIGRlIGxhYm9yYXRvcmlv" "--LIMITE--" "." "QUIT" > "$2"
   }
   f=$OUT/D-adjunto-exe.txt; adjunto exe "$f"
-  grep -qi "Adjunto peligroso" "$f"; e=$?
-  registrar "D4" "Adjunto .exe rechazado (mime_header_checks)" "550 Adjunto peligroso" $e "$f" \
-    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
+
+  # D4: el mismo .exe pero con el nombre declarado según RFC 2231 (filename*),
+  # que antes se colaba. El filtro debe rechazar también esta variante.
+  g=$OUT/D-adjunto-exe-rfc2231.txt
+  smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
+    "From: <$LAB_USER>" "To: <$OTRO>" "Subject: Adjunto .exe RFC 2231 $TS" "MIME-Version: 1.0" \
+    'Content-Type: multipart/mixed; boundary="LIMITE"' "" "--LIMITE" "Content-Type: text/plain; charset=utf-8" "" \
+    "Adjunto de prueba." "--LIMITE" "Content-Type: application/octet-stream; name*=UTF-8''factura.exe" \
+    "Content-Disposition: attachment; filename*=UTF-8''factura.exe" "Content-Transfer-Encoding: base64" "" \
+    "UHJ1ZWJhIGRlIGxhYm9yYXRvcmlv" "--LIMITE--" "." "QUIT" > "$g"
+
+  grep -qi "Adjunto peligroso" "$f" && grep -qi "Adjunto peligroso" "$g"; e=$?
+  registrar "D4" "Adjunto .exe rechazado, también con nombre RFC 2231 (filename*)" "550 Adjunto peligroso (ambos)" $e "$f" \
+    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1) · RFC 2231: $(grep -E '^250 .*queued|^5[0-9][0-9]' "$g" | tail -1)"
 
   f=$OUT/D-adjunto-pdf.txt; adjunto pdf "$f"
   grep -qE "^250 .*queued" "$f"; e=$?
@@ -270,21 +279,19 @@ if [ -n "$LAB_USER" ]; then
   registrar "D7" "Autenticado como $LAB_USER con From: $OTRO: rechazado" "554 Rechazado" $e "$f" \
     "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
 
-  # D9 (opcional): antivirus con el archivo de prueba estándar EICAR (inofensivo)
-  if [ "${ANTIVIRUS:-0}" = 1 ]; then
-    f=$OUT/D-antivirus-eicar.txt
-    smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
-      "From: <$LAB_USER>" "To: <$OTRO>" "Subject: Prueba antivirus $TS" "MIME-Version: 1.0" \
-      'Content-Type: multipart/mixed; boundary="LIMITE"' "" "--LIMITE" "Content-Type: text/plain" "" \
-      "Adjunto EICAR (archivo de prueba estandar de antivirus)." "--LIMITE" \
-      'Content-Type: application/octet-stream; name="eicar.txt"' \
-      'Content-Disposition: attachment; filename="eicar.txt"' "Content-Transfer-Encoding: base64" "" \
-      "WDVPIVAlQEFQWzRcUFpYNTQoUF4pN0NDKTd9JEVJQ0FSLVNUQU5EQVJELUFOVElWSVJVUy1URVNULUZJTEUhJEgrSCo=" \
-      "--LIMITE--" "." "QUIT" > "$f"
-    grep -qE "^5[0-9][0-9]" "$f" && ! grep -qE "^250 .*queued" "$f"; e=$?
-    registrar "D9" "Antivirus: adjunto EICAR rechazado (ClamAV)" "554 Rechazado" $e "$f" \
-      "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
-  fi
+  # D9: antivirus con el archivo de prueba estándar EICAR (inofensivo)
+  f=$OUT/D-antivirus-eicar.txt
+  smtp_tls "EHLO prueba.lab.test" "AUTH PLAIN $AUTH" "MAIL FROM:<$LAB_USER>" "RCPT TO:<$OTRO>" "DATA" \
+    "From: <$LAB_USER>" "To: <$OTRO>" "Subject: Prueba antivirus $TS" "MIME-Version: 1.0" \
+    'Content-Type: multipart/mixed; boundary="LIMITE"' "" "--LIMITE" "Content-Type: text/plain" "" \
+    "Adjunto EICAR (archivo de prueba estandar de antivirus)." "--LIMITE" \
+    'Content-Type: application/octet-stream; name="eicar.txt"' \
+    'Content-Disposition: attachment; filename="eicar.txt"' "Content-Transfer-Encoding: base64" "" \
+    "WDVPIVAlQEFQWzRcUFpYNTQoUF4pN0NDKTd9JEVJQ0FSLVNUQU5EQVJELUFOVElWSVJVUy1URVNULUZJTEUhJEgrSCo=" \
+    "--LIMITE--" "." "QUIT" > "$f"
+  grep -qE "^5[0-9][0-9]" "$f" && ! grep -qE "^250 .*queued" "$f"; e=$?
+  registrar "D9" "Antivirus: adjunto EICAR rechazado (ClamAV)" "554 Rechazado" $e "$f" \
+    "$(grep -E '^250 .*queued|^5[0-9][0-9]' "$f" | tail -1)"
 fi
 
 # D8: SMTP smuggling. Se esconde un segundo correo detrás de un fin de DATA

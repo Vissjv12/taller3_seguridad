@@ -1,6 +1,8 @@
 # =====================================================================
 #  Rechazo de adjuntos por extensión (las tablas regexp ignoran mayúsculas).
-#  LÍMITE: solo revisa el nombre declarado en las cabeceras MIME. No detecta
-#  un .exe renombrado a .pdf ni archivos dentro de un .zip.
+#  Cubre name=/filename= y las variantes RFC 2231 (name*= / filename*=), que
+#  antes se colaban, además de comillas o espacios colgantes.
+#  LÍMITE: solo mira el nombre declarado en cabeceras MIME; el contenido (y los
+#  comprimidos) los analiza ClamAV.
 # =====================================================================
-/^Content-(Disposition|Type):.*name[[:space:]]*=[[:space:]]*"?[^"]*\.(ade|adp|app|bat|chm|cmd|com|cpl|exe|hta|ins|iso|isp|jar|js|jse|lnk|msc|msi|msp|mst|pif|ps1|reg|scr|sct|shb|shs|vb|vbe|vbs|wsc|wsf|wsh)"?[[:space:]]*(;|$)/ REJECT 5.7.1 Adjunto peligroso no permitido (.$2)
+/(filename|name)\*?[[:space:]]*=[[:space:]]*"?[^";]*\.(ade|adp|app|bat|chm|cmd|com|cpl|exe|hta|ins|iso|isp|jar|js|jse|lnk|msc|msi|msp|mst|pif|ps1|reg|scr|sct|shb|shs|vb|vbe|vbs|wsc|wsf|wsh)[[:space:]]*"?[[:space:]]*(;|$)/ REJECT 5.7.1 Adjunto peligroso no permitido (.$2)
