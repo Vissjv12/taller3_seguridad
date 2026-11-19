@@ -411,6 +411,7 @@ grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir
 | Aplicar cambios en `rspamd/` | `docker compose restart rspamd` |
 | Aplicar cambios en `dns/config/` | `docker compose restart dns` |
 | Cambios en un `Dockerfile` o `entrypoint.sh` | `scripts/iniciar.sh` (reconstruye) |
+| Actualizar las imágenes base | `docker compose build --pull` (necesita Internet); háganlo antes de la entrega o cada cierto tiempo |
 | Logs en vivo | `docker compose logs -f mail rspamd dns` |
 | Estado de DMARC | `scripts/dmarc.sh estado` |
 | Detener todo (se conservan buzones) | `docker compose down` |

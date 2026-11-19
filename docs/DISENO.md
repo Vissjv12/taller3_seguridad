@@ -36,6 +36,10 @@ se comporta igual.
 | BIND | 9.18.x | 9.18.39 |
 | ClamAV | 1.0.x | 1.5.4 |
 
+> La columna «validación en vivo» viene de otra máquina del equipo, no de la imagen
+> `debian:12-slim`; sirve para comprobar que la configuración funciona también en versiones
+> más recientes. Las versiones que se usan en el laboratorio son las de la primera columna.
+
 Los contenedores de correo, Rspamd y DNS validan su configuración al arrancar (`postfix check`,
 `doveconf -n`, `rspamadm configtest`, `named-checkconf`, `named-checkzone`) y se detienen si algo
 no es compatible con su versión; ClamAV arranca `clamd`, que falla si su configuración no es válida.
