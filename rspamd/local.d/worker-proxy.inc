@@ -1,7 +1,7 @@
-# Milter para Postfix: escucha en la red del laboratorio (172.30.53.11:11332)
-# El milter no autentica clientes: firewall-lab.sh limita el 11332 al
+# Milter para Postfix: escucha SOLO en la interfaz del laboratorio.
+# El milter no autentica clientes: firewall-lab.sh limita además el 11332 al
 # contenedor de correo (DOCKER-USER). No publicar este puerto en Compose.
-bind_socket = "*:11332";
+bind_socket = "172.30.53.11:11332";
 milter = yes;
 timeout = 30s;
 upstream "local" {
