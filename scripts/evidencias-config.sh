@@ -50,5 +50,8 @@ OUT=evidencias/config-efectiva-$(date +%Y%m%d-%H%M).txt
   for c in dns-lab rspamd-lab mail-lab; do
     echo "--- $c"; docker inspect -f '{{range .Mounts}}{{.Source}} -> {{.Destination}} (rw={{.RW}}){{println}}{{end}}' $c | grep -E 'secrets|dkim|certs'
   done
+  echo
+  echo "### Firewall del laboratorio (cadena DOCKER-USER)"
+  iptables -S DOCKER-USER 2>/dev/null || echo "(requiere sudo para leer iptables)"
 } > "$OUT" 2>&1
 echo "Guardado en $OUT"

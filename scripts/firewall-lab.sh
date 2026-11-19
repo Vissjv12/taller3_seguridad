@@ -9,9 +9,12 @@
 #      laboratorio (las respuestas a los clientes siguen funcionando).
 #   2. Modo clase: el puerto 25 solo acepta conexiones desde PC2_IP.
 #      Modo casa: no hace falta (los puertos solo existen en 127.0.0.1).
+#   3. Solo el contenedor de correo puede hablar con el milter de Rspamd
+#      (172.30.53.11:11332): el milter no autentica y firma DKIM.
 #
-#  Se puede repetir sin duplicar reglas. Si PC2_IP cambia, la regla vieja
-#  se reemplaza. Las reglas se pierden al reiniciar Docker o el equipo.
+#  Se puede repetir sin duplicar reglas: todas llevan la marca taller3-lab.
+#  Las reglas se pierden al reiniciar Docker o el equipo; iniciar.sh las
+#  vuelve a aplicar.
 #  Uso: sudo scripts/firewall-lab.sh [quitar]
 # =====================================================================
 set -euo pipefail
@@ -23,30 +26,59 @@ PC2_IP=$(grep -E '^PC2_IP=' .env | cut -d= -f2 | tr -d ' "' || true)
 
 SUBRED=172.30.53.0/24
 MAIL=172.30.53.10
+RSPAMD=172.30.53.11
+MARCA=taller3-lab
 iptables -N DOCKER-USER 2>/dev/null || true
 
-# Quitar reglas anteriores del laboratorio (salida y puerto 25)
+# Quitar reglas anteriores del laboratorio (salida, puerto 25 y milter).
 quitar_todo() {
   local reglas
-  reglas=$(iptables -S DOCKER-USER | grep -E -- "-s $SUBRED ! -d $SUBRED|-d $MAIL/32 .*--dport 25" || true)
+  reglas=$(iptables -S DOCKER-USER \
+    | grep -E -- "--comment $MARCA|-s $SUBRED ! -d $SUBRED|-d $MAIL/32 .*--dport 25|-d $RSPAMD/32 .*--dport 11332" \
+    || true)
   [ -z "$reglas" ] && return 0
   echo "$reglas" | sed 's/^-A /-D /' | while read -r r; do eval iptables "$r"; done
+}
+
+comprobar() {  # comprobar "descripción" args...
+  local que=$1; shift
+  iptables -C DOCKER-USER "$@" 2>/dev/null || { echo "❌ No se pudo aplicar: $que"; exit 1; }
 }
 
 quitar_todo
 if [ "${1:-}" = quitar ]; then echo "Reglas del laboratorio retiradas."; exit 0; fi
 
-iptables -I DOCKER-USER -s "$SUBRED" ! -d "$SUBRED" -m conntrack --ctstate NEW -j REJECT
+# 1. Salida de la red del laboratorio
+R_SALIDA=(-s "$SUBRED" ! -d "$SUBRED" -m conntrack --ctstate NEW -m comment --comment "$MARCA" -j REJECT)
+iptables -I DOCKER-USER "${R_SALIDA[@]}"
+
+# 2. Puerto 25, solo en modo clase
 if [ -n "$PC2_IP" ]; then
-  iptables -I DOCKER-USER -d "$MAIL" -p tcp --dport 25 ! -s "$PC2_IP" -m conntrack --ctstate NEW -j REJECT
+  R_PUERTO25=(-d "$MAIL" -p tcp --dport 25 ! -s "$PC2_IP" -m conntrack --ctstate NEW -m comment --comment "$MARCA" -j REJECT)
+  iptables -I DOCKER-USER "${R_PUERTO25[@]}"
+  comprobar "puerto 25 solo desde $PC2_IP" "${R_PUERTO25[@]}"
   echo "Puerto 25: solo desde el PC 2 ($PC2_IP)."
 else
   echo "Puerto 25: modo casa, solo accesible en 127.0.0.1."
 fi
-echo "Salida a Internet de los contenedores: bloqueada."
 
-if docker exec mail-lab bash -c 'timeout 4 bash -c "</dev/tcp/1.1.1.1/25"' 2>/dev/null; then
-  echo "❌ ATENCIÓN: el contenedor PUEDE abrir conexiones hacia fuera"; exit 1
+# 3. Milter de Rspamd, solo desde el contenedor de correo
+R_MILTER=(-d "$RSPAMD" -p tcp --dport 11332 ! -s "$MAIL" -m conntrack --ctstate NEW -m comment --comment "$MARCA" -j REJECT)
+iptables -I DOCKER-USER "${R_MILTER[@]}"
+
+comprobar "bloqueo de salida de la red del laboratorio" "${R_SALIDA[@]}"
+comprobar "milter 11332 solo desde $MAIL" "${R_MILTER[@]}"
+echo "Salida a Internet de los contenedores: bloqueada."
+echo "Milter 11332: solo accesible desde el contenedor de correo."
+
+# Sondeo informativo: sin Internet, un timeout no distingue "bloqueado" de
+# "inalcanzable"; la prueba real son las reglas comprobadas arriba.
+if [ "$(docker inspect -f '{{.State.Running}}' mail-lab 2>/dev/null || echo false)" = true ]; then
+  if docker exec mail-lab bash -c 'timeout 4 bash -c "</dev/tcp/1.1.1.1/443"' 2>/dev/null; then
+    echo "❌ ATENCIÓN: el contenedor PUEDE abrir conexiones hacia fuera"; exit 1
+  else
+    echo "✅ El contenedor no abre conexiones hacia fuera (o no hay ruta a Internet)"
+  fi
 else
-  echo "✅ Comprobado: el contenedor no puede abrir conexiones hacia fuera"
+  echo "ℹ️  mail-lab no está corriendo: se omite el sondeo de salida."
 fi

@@ -5,11 +5,19 @@
 set -euo pipefail
 ESTADO=/var/cache/bind/dmarc.estado
 
+publicado() { dig @127.0.0.1 +short TXT _dmarc.lab.test | grep -q 'v=DMARC1'; }
+
 case "${1:-estado}" in
   on|off)
     echo "$1" > "$ESTADO"
     /usr/local/bin/lab-recargar >/dev/null
     sleep 1
+    # No basta con escribir el estado: se comprueba lo que responde el DNS.
+    if [ "$1" = on ]; then
+      publicado || { echo "ERROR: se pidió DMARC on pero el registro no se publicó"; exit 1; }
+    else
+      if publicado; then echo "ERROR: se pidió DMARC off pero el registro sigue publicado"; exit 1; fi
+    fi
     ;;
   estado) ;;
   *) echo "Uso: lab-dmarc on|off|estado"; exit 2 ;;

@@ -119,7 +119,8 @@ pública del PC 1. Así ninguna clave privada pasa de un equipo a otro.
 
 `modo.sh clase` cambia `.env` y `/etc/hosts`. `iniciar.sh` vuelve a publicar los puertos
 en la IP de la red, regenera el SPF del DNS con esa IP, conserva los buzones y aplica el
-firewall: el puerto 25 queda limitado al PC 2.
+firewall: el puerto 25 queda limitado al PC 2 y el milter de Rspamd (11332) solo acepta
+conexiones del contenedor de correo.
 
 **Si `scp` no funciona** (el PC 1 sin servidor SSH): copien `certs/ca.crt` con un USB, o
 instalen SSH en el PC 1 (`sudo apt install openssh-server`).
@@ -207,7 +208,7 @@ Cada ejecución crea `evidencias/pruebas-FECHA/` con la salida cruda de cada pru
 | D6 | Lo enviado por 587 sale firmado con DKIM | `d=lab.test; s=taller3-N` |
 | D7 | Autenticada como Ana, sobre correcto pero `From: pedro` (suplantación interna) | `554 Suplantacion interna...` |
 | D8 | SMTP smuggling: el correo escondido no se acepta | 1 solo `250 queued` |
-| D9 | Antivirus: adjunto EICAR rechazado (opcional) | `554 Virus detectado` |
+| D9 | Antivirus: adjunto EICAR rechazado (opcional) | rechazo 5xx (mensaje según Rspamd) |
 | D10 | Fuerza bruta: tras 6 AUTH fallidos se corta la sesión | `421 too many errors` |
 
 > - **D2 y D3 fallan a propósito con DMARC desactivado** (`scripts/dmarc.sh off`): es la demo "antes".

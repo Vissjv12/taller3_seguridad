@@ -7,12 +7,21 @@ PLANTILLA=/etc/lab-dns/lab.test.zone.plantilla
 DKIM_DIR=${DKIM_DIR:-/run/lab-dkim}
 ESTADO=/var/cache/bind/dmarc.estado
 ZONA=/var/cache/bind/db.lab.test
+SERIAL_FILE=/var/cache/bind/serial.estado
 
 : "${LAB_IP:?Falta LAB_IP (archivo .env)}"
 [ -f "$ESTADO" ] || echo on > "$ESTADO"
 
+# Serie monótona: date +%s se repite si se toca la zona dos veces en el mismo
+# segundo, y BIND ignora una recarga con la misma serie (DMARC quedaría mal).
+ANTERIOR=$(cat "$SERIAL_FILE" 2>/dev/null | tr -dc 0-9 || true)
+ANTERIOR=${ANTERIOR:-0}
+AHORA=$(date +%s)
+if [ "$AHORA" -gt "$ANTERIOR" ]; then SERIAL=$AHORA; else SERIAL=$((ANTERIOR + 1)); fi
+echo "$SERIAL" > "$SERIAL_FILE"
+
 {
-  sed -e "s/__SERIAL__/$(date +%s)/" -e "s/__LAB_IP__/$LAB_IP/g" "$PLANTILLA"
+  sed -e "s/__SERIAL__/$SERIAL/" -e "s/__LAB_IP__/$LAB_IP/g" "$PLANTILLA"
   echo
   echo "; --- DKIM: claves públicas (crear-dkim.sh / rotar-dkim.sh)."
   echo ";     Durante una rotación se publican la antigua y la nueva a la vez."
@@ -28,4 +37,4 @@ ZONA=/var/cache/bind/db.lab.test
 
 named-checkzone -q lab.test "$ZONA.tmp" || { named-checkzone lab.test "$ZONA.tmp"; exit 1; }
 mv "$ZONA.tmp" "$ZONA"
-chown bind:bind "$ZONA" "$ESTADO"
+chown bind:bind "$ZONA" "$ESTADO" "$SERIAL_FILE"

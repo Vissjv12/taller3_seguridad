@@ -10,7 +10,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if ls dkim-publica/taller3-*.txt >/dev/null 2>&1; then
-  echo "Ya hay claves DKIM ($(cat dkim-publica/activo 2>/dev/null) activa). No se crea otra."
+  if [ ! -s dkim-publica/activo ]; then
+    ls dkim-publica/taller3-*.txt | sed -E 's/.*(taller3-[0-9]+)\.txt$/\1/' | sort -V | tail -1 > dkim-publica/activo
+    echo "Reparado dkim-publica/activo -> $(cat dkim-publica/activo)"
+  fi
+  echo "Ya hay claves DKIM ($(cat dkim-publica/activo) activa). No se crea otra."
   echo "Para cambiarla: scripts/rotar-dkim.sh"
   exit 0
 fi

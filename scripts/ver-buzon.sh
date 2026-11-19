@@ -3,6 +3,7 @@
 # Uso: scripts/ver-buzon.sh [pedro|ana]
 set -euo pipefail
 U=${1:-pedro}
+case "$U" in ana|pedro) ;; *) echo "Usuario no válido: $U (use ana o pedro)"; exit 2 ;; esac
 DIR=/var/mail/vhosts/lab.test/$U/Maildir
 
 echo "=== Archivos en el buzón de $U ==="

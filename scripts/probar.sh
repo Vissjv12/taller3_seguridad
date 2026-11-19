@@ -14,13 +14,14 @@
 #          evidencias/pruebas-FECHA/reporte.html (tabla para el informe)
 # =====================================================================
 set -uo pipefail
+umask 077          # las evidencias quedan solo para quien ejecuta
 cd "$(dirname "$0")/.."
 
 HOST=${HOST:-mail.lab.test}
 CA=${CA:-certs/ca.crt}
 TS=$(date +%Y%m%d-%H%M%S)
 OUT=evidencias/pruebas-$TS
-mkdir -p "$OUT"
+mkdir -p "$OUT"; chmod 700 "$OUT"
 
 [ -f "$CA" ] || { echo "No encuentro $CA"; exit 1; }
 command -v nc >/dev/null || { echo "Instala netcat-openbsd (nc)"; exit 1; }
@@ -29,6 +30,9 @@ LAB_USER=${LAB_USER:-}
 LAB_PASS=${LAB_PASS:-}
 if [ -n "$LAB_USER" ] && [ -z "$LAB_PASS" ]; then
   read -r -s -p "Contraseña de $LAB_USER: " LAB_PASS; echo
+fi
+if [ -n "$LAB_USER" ]; then
+  command -v perl >/dev/null || { echo "Instala perl (hace falta para ocultar credenciales)"; exit 1; }
 fi
 
 VERDE=$'\e[32m'; ROJO=$'\e[31m'; GRIS=$'\e[90m'; NORMAL=$'\e[0m'
@@ -319,11 +323,6 @@ registrar "D10" "Fuerza bruta: tras varios AUTH fallidos el servidor corta la se
   "$(grep -iE 'too many|^421' "$f" | head -1) (fallos 535: $(grep -c '^535' "$f"))"
 echo "${GRIS}(D10 deja frenado a este equipo ~1 minuto: esperen antes de usar Thunderbird)${NORMAL}"
 
-# No dejar credenciales en las evidencias
-if [ -n "$LAB_USER" ]; then
-  sed -i "s#$AUTH#[credencial-oculta]#g; s#$LAB_PASS#[clave-oculta]#g" "$OUT"/*.txt
-fi
-
 echo
 echo "== Resultado: $OK de $TOTAL pruebas pasan"
 
@@ -345,5 +344,17 @@ $FILAS
 <p><small>Salida completa de cada prueba en los archivos .txt de esta carpeta. Generado sin conexión a ningún servicio web.</small></p>
 </body></html>
 EOF
+
+# No dejar credenciales en las evidencias. Van por entorno, no en argv:
+# /proc/<pid>/cmdline lo puede leer cualquier usuario. \Q...\E hace literal
+# el patrón aunque la contraseña lleve # & * \ o [.
+if [ -n "$LAB_USER" ]; then
+  AUTH="$AUTH" LAB_PASS="$LAB_PASS" perl -pi -e \
+    's/\Q$ENV{AUTH}\E/[credencial-oculta]/g; s/\Q$ENV{LAB_PASS}\E/[clave-oculta]/g' "$OUT"/*
+  if grep -RFq -- "$LAB_PASS" "$OUT" || grep -RFq -- "$AUTH" "$OUT"; then
+    echo "ERROR: quedaron credenciales en $OUT"; exit 1
+  fi
+fi
+
 echo "Reporte: $OUT/reporte.html"
 [ "$OK" -eq "$TOTAL" ]

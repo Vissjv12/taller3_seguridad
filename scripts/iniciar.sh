@@ -33,11 +33,13 @@ echo "CA: $(openssl x509 -in certs/ca.crt -noout -subject | sed 's/.*CN *= *//')
 echo "Certificado del servidor válido hasta: $(openssl x509 -in certs/mail.crt -noout -enddate | cut -d= -f2)"
 
 paso "3/5 Contenedores (la primera vez tarda varios minutos)"
-if ! docker compose up -d --build --wait --wait-timeout 300; then
+if ! docker compose up -d --build --wait; then
   docker compose ps
   fallo "algún contenedor no arrancó. Revisen: docker compose logs <servicio>"
 fi
 docker compose ps --format 'table {{.Name}}\t{{.Status}}'
+docker compose exec -T mail postconf -h smtpd_forbid_bare_newline | grep -qx normalize \
+  || fallo "Postfix no soporta smtpd_forbid_bare_newline=normalize (¿versión < 3.7.10?). Actualicen 'debian:12-slim' o quiten esa opción de main.cf"
 
 paso "4/5 Firewall del laboratorio (pide la contraseña de sudo)"
 sudo "$S/firewall-lab.sh"

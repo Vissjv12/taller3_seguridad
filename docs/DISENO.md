@@ -69,6 +69,7 @@ compatible con su versión.
 | 1 | DNS | bind9 solo para el servidor; clientes con `/etc/hosts`; `recursion no` | Dominios ajenos reciben `REFUSED` al instante |
 | 2 | Rspamd | Contenedor aparte, milter `172.30.53.11:11332`, sin Redis | Sin Redis no hay Bayes, greylisting ni ratelimit propio |
 | 3 | Puerto 25 | Publicado en `LAB_IP`; en clase limitado a `PC2_IP` con `DOCKER-USER` | **ufw no filtra puertos de Docker** |
+| 3b | Milter 11332 | `DOCKER-USER`: solo el contenedor de correo puede conectar | El milter no autentica clientes y firma DKIM; sin esta regla, cualquier contenedor podría pedirle firmas |
 | 4 | DMARC | `p=reject; adkim=s; aspf=s`, sin `rua=` | El rechazo llega como `554 5.7.1` |
 | 5 | SPF | `ip4:<LAB_IP> -all` | Se regenera al cambiar de modo |
 | 6 | DKIM | RSA 2048, selectores `taller3-N`, rotación en dos pasos | Ver sección 5 |

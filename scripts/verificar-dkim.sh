@@ -11,6 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 U=${1:-pedro}
+case "$U" in ana|pedro) ;; *) echo "Usuario no válido: $U (use ana o pedro)"; exit 2 ;; esac
 IP_PRUEBA=192.0.2.10
 OUT=evidencias/dkim-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$OUT"

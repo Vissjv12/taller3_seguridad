@@ -14,3 +14,14 @@ evidencias/
 __pycache__/
 *.pyc
 *.log
+
+# Registros públicos de DKIM: los genera crear-dkim.sh/rotar-dkim.sh
+dkim-publica/
+
+# Claves y artefactos criptográficos sueltos, capturas y keylogs de TLS
+*.key
+*.pem
+*.csr
+*.srl
+*.pcapng
+tls-keylog*.txt
