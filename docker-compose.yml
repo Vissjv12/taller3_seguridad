@@ -87,6 +87,11 @@ services:
     container_name: mail-lab
     logging: *default-logging
     hostname: mail.lab.test
+    # Resolver del laboratorio: sin esto, el DNS embebido de Docker reenvía las
+    # consultas inversas al resolver del host y, si no responde, Postfix tarda
+    # en saludar (y los clientes que escriben antes del banner fallan).
+    dns:
+      - 172.30.53.53
     depends_on:
       rspamd:
         condition: service_healthy
