@@ -1,5 +1,13 @@
 name: taller3-correo
 
+# Rotación de logs: sin límite, una fuerza bruta o un mensaje enorme puede
+# llenar el disco del PC. Se consultan igual con: docker compose logs <servicio>
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # Red del laboratorio
 #   172.30.53.10  mail-lab    Postfix + Dovecot
 #   172.30.53.11  rspamd-lab  Rspamd (milter: DKIM, SPF, DMARC, spam, reglas propias)
@@ -16,6 +24,7 @@ services:
     build: ./dns
     image: taller3/dns:local
     container_name: dns-lab
+    logging: *default-logging
     hostname: ns.lab.test
     environment:
       LAB_IP: ${LAB_IP:?Falta LAB_IP. Ejecuten scripts/modo.sh casa o scripts/modo.sh clase}
@@ -42,6 +51,7 @@ services:
     build: ./rspamd
     image: taller3/rspamd:local
     container_name: rspamd-lab
+    logging: *default-logging
     hostname: rspamd.lab.test
     depends_on:
       dns:
@@ -75,6 +85,7 @@ services:
     build: ./mail
     image: taller3/mail:local
     container_name: mail-lab
+    logging: *default-logging
     hostname: mail.lab.test
     depends_on:
       rspamd:
@@ -111,6 +122,7 @@ services:
     build: ./clamav
     image: taller3/clamav:local
     container_name: clamav-lab
+    logging: *default-logging
     hostname: clamav.lab.test
     networks:
       lab:
