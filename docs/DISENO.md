@@ -72,7 +72,7 @@ no es compatible con su versión; ClamAV arranca `clamd`, que falla si su config
 |---|---|---|---|
 | 1 | DNS | bind9 solo para el servidor; clientes con `/etc/hosts`; `recursion no` | Dominios ajenos reciben `REFUSED` al instante |
 | 2 | Rspamd | Contenedor aparte, milter `172.30.53.11:11332`, sin Redis | Sin Redis no hay Bayes, greylisting ni ratelimit propio |
-| 3 | Puerto 25 | Publicado en `LAB_IP`; en clase limitado a `PC2_IP` con `DOCKER-USER` | **ufw no filtra puertos de Docker** |
+| 3 | Puerto 25 | Publicado en `LAB_IP`; en clase abierto a la red del grupo (en casa solo `127.0.0.1`) | En un servidor real también va abierto: la defensa es SPF/DKIM/DMARC + Rspamd + límites. **ufw no filtra puertos de Docker** |
 | 3b | Milter 11332 | `DOCKER-USER`: solo el contenedor de correo puede conectar | El milter no autentica clientes y firma DKIM; sin esta regla, cualquier contenedor podría pedirle firmas. Requiere ejecutar `scripts/firewall-lab.sh` (root) |
 | 4 | DMARC | `p=reject; adkim=s; aspf=s`, sin `rua=` | El rechazo llega como `554 5.7.1` |
 | 5 | SPF | `ip4:<LAB_IP> -all` | Se regenera al cambiar de modo |
@@ -124,6 +124,10 @@ tránsito o en colas fallarían DMARC. Todo esto se validó en vivo.
   mostrar la dirección completa del remitente.
 - **El tramo servidor-a-servidor real** usa TLS oportunista. Exigirlo requiere MTA-STS o DANE,
   que dependen de DNS público: solo se documentan.
+- **El puerto 25 no se filtra por IP** dentro de la red del grupo: cualquier equipo puede
+  intentar entregar correo (lo frenan SPF/DKIM/DMARC, Rspamd y los límites) y, durante la demo
+  con DMARC apagado, un correo podría colarse. En un servidor real el 25 también va abierto:
+  la restricción por IP no es un patrón de producción.
 - **Sin Redis** no hay aprendizaje bayesiano ni greylisting.
 - **Sin reputación externa** (listas negras, hashes compartidos): requieren Internet.
 - **Los límites de fuerza bruta frenan, no bloquean**: un atacante paciente puede seguir

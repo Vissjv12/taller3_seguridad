@@ -4,8 +4,8 @@
 #
 #   scripts/modo.sh casa              Un solo PC (en casa). Todo en 127.0.0.1:
 #                                     el servidor no es visible desde la red.
-#   scripts/modo.sh clase [IP_PC2]    PC 1 en clase. Detecta su IP en la red y
-#                                     pide la del PC 2 si no se indica.
+#   scripts/modo.sh clase [IP_PC1]    PC 1 en clase: detecta su IP en la red
+#                                     (o se la pasan) y la publica.
 #   scripts/modo.sh cliente IP_PC1    PC 2 en clase: solo apunta mail.lab.test
 #                                     a la IP del PC 1 (no levanta contenedores).
 #   scripts/modo.sh estado            Muestra la configuración actual.
@@ -25,22 +25,20 @@ poner_hosts() {  # poner_hosts IP
   echo "/etc/hosts: mail.lab.test -> $1"
 }
 
-escribir_env() {  # escribir_env MODO LAB_IP PC2_IP
+escribir_env() {  # escribir_env MODO LAB_IP
   cat > .env <<EOF
 # Generado por scripts/modo.sh $1 ($(date '+%Y-%m-%d %H:%M'))
 MODO=$1
 # IP donde se publican 25/587/993 y única IP autorizada por el SPF de lab.test
 LAB_IP=$2
-# IP del PC 2: la única que puede usar el puerto 25 (vacío en casa)
-PC2_IP=$3
 EOF
   chmod 600 .env
-  echo ".env: MODO=$1  LAB_IP=$2  PC2_IP=${3:-(ninguna)}"
+  echo ".env: MODO=$1  LAB_IP=$2"
 }
 
 case "${1:-estado}" in
   casa)
-    escribir_env casa 127.0.0.1 ""
+    escribir_env casa 127.0.0.1
     poner_hosts 127.0.0.1
     echo; echo "Siguiente paso: scripts/iniciar.sh"
     ;;
@@ -50,11 +48,7 @@ case "${1:-estado}" in
     read -r -p "IP de ESTE PC (PC 1) en la red de clase [${DETECTADA:-?}]: " LIP
     LIP=${LIP:-$DETECTADA}
     ip_valida "$LIP" || { echo "IP no válida: '$LIP'"; exit 1; }
-    P2=${2:-}
-    [ -n "$P2" ] || read -r -p "IP del PC 2 (en el PC 2: ip -4 addr): " P2
-    ip_valida "$P2" || { echo "IP no válida: '$P2'"; exit 1; }
-    [ "$P2" != "$LIP" ] || { echo "La IP del PC 2 no puede ser la del PC 1"; exit 1; }
-    escribir_env clase "$LIP" "$P2"
+    escribir_env clase "$LIP"
     poner_hosts "$LIP"
     echo; echo "Siguiente paso: scripts/iniciar.sh"
     ;;
@@ -72,7 +66,7 @@ case "${1:-estado}" in
     ;;
 
   estado)
-    if [ -f .env ]; then grep -E '^(MODO|LAB_IP|PC2_IP)=' .env; else echo "Sin .env (ejecuten modo.sh casa o modo.sh clase)"; fi
+    if [ -f .env ]; then grep -E '^(MODO|LAB_IP)=' .env; else echo "Sin .env (ejecuten modo.sh casa o modo.sh clase)"; fi
     echo "/etc/hosts: $(grep 'mail\.lab\.test' /etc/hosts || echo '(sin entrada para mail.lab.test)')"
     ;;
 

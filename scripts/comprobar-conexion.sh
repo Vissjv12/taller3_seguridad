@@ -20,7 +20,7 @@ IP=$(getent hosts $HOST | awk '{print $1}')
 
 for p in 587 993 25; do
   if timeout 4 bash -c "</dev/tcp/$HOST/$p" 2>/dev/null; then bien "puerto $p accesible"
-  else mal "puerto $p NO accesible (¿contenedores arriba? ¿IP correcta? ¿firewall/PC2_IP?)"; fi
+  else mal "puerto $p NO accesible (¿contenedores arriba? ¿IP correcta? ¿firewall?)"; fi
 done
 
 if [ -f certs/ca.crt ]; then

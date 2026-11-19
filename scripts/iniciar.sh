@@ -21,7 +21,7 @@ docker compose version >/dev/null 2>&1 || fallo "falta Docker Compose v2 (paquet
 docker info >/dev/null 2>&1 || fallo "Docker no responde. ¿Están en el grupo docker? (sudo usermod -aG docker \$USER y reiniciar sesión)"
 [ -f .env ] || fallo "falta .env. Ejecuten primero: scripts/modo.sh casa  (o: scripts/modo.sh clase)"
 set -a; . ./.env; set +a
-echo "Modo: ${MODO:-?}   LAB_IP: $LAB_IP   PC2_IP: ${PC2_IP:-(ninguna)}"
+echo "Modo: ${MODO:-?}   LAB_IP: $LAB_IP"
 chmod +x scripts/*.sh 2>/dev/null || true
 
 paso "2/5 Secretos (solo se crean los que faltan)"

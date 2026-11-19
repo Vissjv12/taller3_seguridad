@@ -8,7 +8,7 @@ dos PCs en red (en clase)**: solo cambia el modo.
 |---|---|
 | Envío (587) | STARTTLS obligatorio, autenticación solo dentro de TLS |
 | Lectura (993) | TLS implícito; el 143 está deshabilitado |
-| Recepción (25) | Como otro servidor de Internet; en clase, solo desde el PC 2 |
+| Recepción (25) | Como otro servidor de Internet; en clase, abierto a la red del grupo |
 | Autenticidad | SPF, DKIM (con rotación de claves) y DMARC `p=reject`, en un DNS propio |
 | Antisuplantación | Sobre (Postfix) y `From:` visible (regla propia en Rspamd) atados al usuario |
 | Ataques | Protección contra SMTP smuggling, fuerza bruta y agotamiento de recursos |
@@ -118,7 +118,7 @@ pública del PC 1. Así ninguna clave privada pasa de un equipo a otro.
 |---|---|---|
 | 1 | Conectarse a la red | Conectarse a la **misma** red y anotar su IP: `ip -4 addr` |
 | 2 | `git pull` | `git pull` |
-| 3 | `scripts/modo.sh clase` → confirma su IP y escribe la del PC 2 | |
+| 3 | `scripts/modo.sh clase` → confirma su IP en la red | |
 | 4 | `scripts/iniciar.sh` → al final muestra los comandos para el PC 2 | |
 | 5 | | `scripts/modo.sh cliente IP_DEL_PC1` |
 | 6 | | Traer la CA con el comando `scp` que mostró `iniciar.sh` en el PC 1 (o con un USB) |
@@ -128,8 +128,9 @@ pública del PC 1. Así ninguna clave privada pasa de un equipo a otro.
 
 `modo.sh clase` cambia `.env` y `/etc/hosts`. `iniciar.sh` vuelve a publicar los puertos
 en la IP de la red, regenera el SPF del DNS con esa IP, conserva los buzones y aplica el
-firewall: el puerto 25 queda limitado al PC 2 y el milter de Rspamd (11332) solo acepta
-conexiones del contenedor de correo.
+firewall: bloquea la salida de los contenedores y deja que solo el contenedor de correo
+use el milter de Rspamd (11332). El puerto 25 queda abierto a la red del grupo (en casa,
+solo en `127.0.0.1`) y lo filtran SPF/DKIM/DMARC, Rspamd y los límites.
 
 > **Las dos garantías del firewall (salida bloqueada y milter restringido) las aplica
 > `scripts/firewall-lab.sh`, que necesita root.** Arrancar solo con `docker compose up`
@@ -146,7 +147,6 @@ y presenten todo desde un solo PC. Las demos son idénticas.
 | Situación | Qué hacer |
 |---|---|
 | Cambió la IP del PC 1 | PC 1: `scripts/modo.sh clase` + `scripts/iniciar.sh` · PC 2: `scripts/modo.sh cliente NUEVA_IP` |
-| Cambió la IP del PC 2 | PC 1: `scripts/modo.sh clase NUEVA_IP_PC2` + `scripts/iniciar.sh` |
 | Se reinició el PC 1 | `scripts/iniciar.sh` (vuelve a aplicar el firewall) |
 | El PC 2 no conecta | PC 2: `scripts/comprobar-conexion.sh` dice qué falla |
 
@@ -425,7 +425,6 @@ grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir
 | `address already in use` en el puerto 25 | Hay otro servidor de correo en el PC (exim, postfix) | `sudo systemctl disable --now exim4 postfix` |
 | `comprobar-conexion.sh`: TLS no verifica | La CA local no es la del servidor | En clase, traer la `ca.crt` del PC 1 |
 | El PC 2 no llega a ningún puerto | Redes distintas o red que aísla equipos | Misma Wi-Fi o hotspot; `scripts/comprobar-conexion.sh` |
-| El PC 2 llega a 587/993 pero no al 25 | `PC2_IP` incorrecta en el PC 1 | PC 1: `scripts/modo.sh clase IP_CORRECTA` + `iniciar.sh` |
 | `451 4.7.1 Service unavailable` al enviar | Rspamd todavía arrancando (el correo se reintenta) | Esperar unos segundos |
 | `451 4.7.1 Antivirus no disponible` | ClamAV arrancando o caído; el correo se reintenta | `docker compose ps clamav`; `docker compose logs clamav` |
 | Thunderbird advierte del certificado | CA no importada en **Thunderbird** o CA de otro equipo | Sección 4, paso 1. No aceptar la excepción |
