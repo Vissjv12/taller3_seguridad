@@ -128,6 +128,14 @@ tránsito o en colas fallarían DMARC. Todo esto se validó en vivo.
 - **Sin reputación externa** (listas negras, hashes compartidos): requieren Internet.
 - **Los límites de fuerza bruta frenan, no bloquean**: un atacante paciente puede seguir
   probando despacio. Contraseñas largas (mínimo 10 caracteres, exigido por `crear-usuarios.sh`) siguen siendo la defensa principal.
+- **Los contenedores tienen el sistema de archivos escribible**: un atacante con ejecución
+  dentro de un contenedor podría dejar cambios en su capa, que sobreviven a un reinicio. No se
+  añadió `read_only` + `tmpfs` porque contra un compromiso del host no aporta nada (con root en
+  el host se lee la capa y los secretos montados igual), y en `mail` obliga a rehacer cola y
+  directorios de trabajo. Queda como mejora futura si se quiere demostrar inmutabilidad.
+- **Las imágenes base no están fijadas por digest**: `FROM debian:12-slim` puede cambiar entre
+  construcciones. Se actualizan a propósito con `docker compose build --pull`; para
+  reproducibilidad estricta habría que fijar digests y mantenerlos al día.
 
 ## 7. Relación con la rúbrica
 
