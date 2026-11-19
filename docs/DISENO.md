@@ -11,7 +11,7 @@ informe y la presentación.
  Cliente(s) ───► │ mail-lab .10        milter      rspamd-lab .11     DNS      dns-lab .53  │
  25/587/993      │ Postfix + Dovecot ───────────►  DKIM/SPF/DMARC  ───────►  bind9         │
  en LAB_IP       │                                 reglas propias                         │
-                 │                                       │ (opcional)                       │
+                 │                                       │ antivirus                        │
                  │                                       ▼                                  │
                  │                                 clamav-lab .12                           │
                  └──────────────────────────────────────────────────────────────────────────┘
@@ -20,7 +20,7 @@ informe y la presentación.
 | Modo | `LAB_IP` | Quién se conecta | IP que ve el servidor |
 |---|---|---|---|
 | Casa (un PC) | `127.0.0.1` | El mismo PC | `172.30.53.1` (puerta de enlace Docker) |
-| Clase (dos PCs) | IP del PC 1 en la red | PC 2 (y el PC 1) | IP real del PC 2 |
+| Clase (dos PCs) | IP del PC 1 en la red | PC 2; el PC 1 solo en 587/993 | IP real del PC 2 |
 
 En ambos modos el cliente **no** es la IP autorizada por SPF, por eso la demo de suplantación
 se comporta igual.
@@ -34,11 +34,11 @@ se comporta igual.
 | OpenSSL | 3.0.22 | 3.0.13 |
 | Rspamd | 3.4.x | 3.8.1 |
 | BIND | 9.18.x | 9.18.39 |
-| ClamAV (opcional) | 1.0.x | 1.5.4 |
+| ClamAV | 1.0.x | 1.5.4 |
 
-Cada contenedor valida su configuración al arrancar (`postfix check`, `doveconf -n`,
-`rspamadm configtest`, `named-checkconf`, `named-checkzone`) y se detiene si algo no es
-compatible con su versión.
+Los contenedores de correo, Rspamd y DNS validan su configuración al arrancar (`postfix check`,
+`doveconf -n`, `rspamadm configtest`, `named-checkconf`, `named-checkzone`) y se detienen si algo
+no es compatible con su versión; ClamAV arranca `clamd`, que falla si su configuración no es válida.
 
 ## 3. Tramos (para el diagrama del entregable)
 
@@ -69,7 +69,7 @@ compatible con su versión.
 | 1 | DNS | bind9 solo para el servidor; clientes con `/etc/hosts`; `recursion no` | Dominios ajenos reciben `REFUSED` al instante |
 | 2 | Rspamd | Contenedor aparte, milter `172.30.53.11:11332`, sin Redis | Sin Redis no hay Bayes, greylisting ni ratelimit propio |
 | 3 | Puerto 25 | Publicado en `LAB_IP`; en clase limitado a `PC2_IP` con `DOCKER-USER` | **ufw no filtra puertos de Docker** |
-| 3b | Milter 11332 | `DOCKER-USER`: solo el contenedor de correo puede conectar | El milter no autentica clientes y firma DKIM; sin esta regla, cualquier contenedor podría pedirle firmas |
+| 3b | Milter 11332 | `DOCKER-USER`: solo el contenedor de correo puede conectar | El milter no autentica clientes y firma DKIM; sin esta regla, cualquier contenedor podría pedirle firmas. Requiere ejecutar `scripts/firewall-lab.sh` (root) |
 | 4 | DMARC | `p=reject; adkim=s; aspf=s`, sin `rua=` | El rechazo llega como `554 5.7.1` |
 | 5 | SPF | `ip4:<LAB_IP> -all` | Se regenera al cambiar de modo |
 | 6 | DKIM | RSA 2048, selectores `taller3-N`, rotación en dos pasos | Ver sección 5 |
@@ -86,7 +86,7 @@ compatible con su versión.
 | **Agotamiento de recursos** | Postfix: conexiones simultáneas, destinatarios, comandos basura, tamaño de mensaje. Dovecot: `mail_max_userip_connections`. Docker: `mem_limit`, `cpus`, `pids_limit` por contenedor | `evidencias-config.sh` |
 | **Mínimo privilegio** | `mail` solo ve `secrets/mail/`; `rspamd` solo `secrets/dkim/` (y copia solo la clave activa); `dns` solo las claves públicas. `cap_drop: ALL` + capacidades mínimas en `dns` y `rspamd`; `no-new-privileges` en todos | `evidencias-config.sh` (montajes y capacidades) |
 | **Rotación de secretos** | DKIM (selectores), certificado TLS (clave nueva), contraseñas | Demo 6.4 y 6.5 del README |
-| **Antivirus** (opcional) | ClamAV como perfil de Compose, integrado en Rspamd; firma local EICAR de respaldo | D9 |
+| **Antivirus** (integrado) | ClamAV obligatorio: Rspamd depende de su healthcheck; `antivirus.conf` siempre activo; `force_actions` devuelve 451 si no puede analizar; firma local EICAR de respaldo | D9 |
 
 **Por qué fail2ban no:** en contenedores tendría que leer los logs de Docker y bloquear en
 `DOCKER-USER`, con más piezas que fallen. Los límites de Postfix y Dovecot cubren el mismo
@@ -111,8 +111,10 @@ tránsito o en colas fallarían DMARC. Todo esto se validó en vivo.
 - **TLS no cifra lo almacenado** ni da cifrado de extremo a extremo (actividad 9). Para eso hace
   falta OpenPGP o S/MIME en los clientes (Thunderbird trae OpenPGP integrado).
 - **DKIM y DMARC dan autenticidad, no confidencialidad.**
-- **El filtro de adjuntos por extensión** solo mira el nombre. El antivirus opcional analiza el
-  contenido y dentro de comprimidos, pero con firmas congeladas en la fecha de construcción.
+- **El filtro de adjuntos por extensión** solo mira el nombre y se puede eludir (por ejemplo
+  con `filename*=`). El antivirus analiza el contenido y dentro de comprimidos, con firmas
+  congeladas en la fecha de construcción. Si clamd no responde, el correo se **difiere** (451)
+  y se reintenta: nunca se acepta sin analizar.
 - **DMARC solo protege el dominio propio.** Dominios parecidos (`1ab.test`) o nombres visibles
   engañosos (`"Ana - Soporte" <x@otro.test>`) pasan DMARC: ahí entran la formación de usuarios y
   mostrar la dirección completa del remitente.

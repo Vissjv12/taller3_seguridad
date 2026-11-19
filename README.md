@@ -12,10 +12,10 @@ dos PCs en red (en clase)**: solo cambia el modo.
 | Autenticidad | SPF, DKIM (con rotación de claves) y DMARC `p=reject`, en un DNS propio |
 | Antisuplantación | Sobre (Postfix) y `From:` visible (regla propia en Rspamd) atados al usuario |
 | Ataques | Protección contra SMTP smuggling, fuerza bruta y agotamiento de recursos |
-| Adjuntos | Bloqueo por extensión + antivirus ClamAV **opcional** |
-| Contenedores | Cada uno ve solo sus secretos, con capacidades mínimas y límites de memoria y CPU |
+| Adjuntos | Bloqueo por extensión + antivirus ClamAV integrado (rechaza si no puede analizar) |
+| Contenedores | Cada uno ve solo sus secretos; capacidades mínimas en DNS y Rspamd y límites de memoria y CPU |
 
-> Validación de referencia: **27 de 27 pruebas pasan** (`scripts/probar.sh`), incluido el antivirus.
+> Validación de referencia: **27 de 27 pruebas pasan** (`scripts/probar.sh`).
 > El diseño, los límites y la relación con la rúbrica están en [`docs/DISENO.md`](docs/DISENO.md).
 
 ---
@@ -30,7 +30,7 @@ dos PCs en red (en clase)**: solo cambia el modo.
 6. [Demostraciones para la presentación](#6-demostraciones-para-la-presentación)
 7. [Actividades del taller y evidencias](#7-actividades-del-taller-y-evidencias)
 8. [Capturas de tráfico](#8-capturas-de-tráfico)
-9. [Antivirus (opcional)](#9-antivirus-opcional)
+9. [Antivirus (ClamAV)](#9-antivirus-clamav)
 10. [Entregable](#10-entregable)
 11. [Comandos útiles y problemas frecuentes](#11-comandos-útiles-y-problemas-frecuentes)
 12. [Estructura del repositorio](#12-estructura-del-repositorio)
@@ -39,19 +39,27 @@ dos PCs en red (en clase)**: solo cambia el modo.
 
 ## 1. Requisitos (una vez por PC)
 
-Linux (Ubuntu o Debian) con conexión a Internet **la primera vez** (para descargar las imágenes).
+Linux (Ubuntu o Debian) con conexión a Internet **la primera vez** (para descargar las imágenes
+y las firmas del antivirus). El antivirus usa **1–1,5 GB de RAM** adicionales.
 
 ```bash
 sudo apt update
+# Ubuntu: el plugin de Compose v2 viene en el paquete docker-compose-v2.
 sudo apt install -y docker.io docker-compose-v2 git openssl netcat-openbsd thunderbird tcpdump wireshark
 sudo usermod -aG docker $USER
 # Cerrar sesión y volver a entrar (o reiniciar). Comprobar:
 docker run --rm hello-world
+docker compose version          # debe responder v2.x
 
 git clone https://github.com/Vissjv12/taller3_seguridad.git
 cd taller3_seguridad
 chmod +x scripts/*.sh       # necesario si los archivos se subieron desde la web de GitHub
 ```
+
+> **Debian:** el paquete `docker-compose-v2` solo existe en Ubuntu. En Debian 12 no hay
+> plugin v2 en `apt`: instalen Docker y el plugin de Compose desde el
+> [repositorio oficial](https://docs.docker.com/engine/install/debian/) y después el resto
+> de paquetes con `apt`. En ambos casos, `docker compose version` debe responder v2.x.
 
 > **Todos los comandos de esta guía se ejecutan desde la carpeta `taller3_seguridad`.**
 
@@ -73,7 +81,8 @@ LAB_USER=ana@lab.test scripts/probar.sh
 
 1. comprueba Docker y el modo;
 2. crea los secretos que falten: CA, certificado TLS, contraseñas y clave DKIM;
-3. construye y levanta los contenedores y **espera a que estén sanos**;
+3. construye y levanta los contenedores y **espera a que estén sanos** (la primera vez
+   descarga las firmas de ClamAV, varios minutos);
 4. aplica el firewall (pide la contraseña de `sudo`);
 5. muestra un resumen con los pasos siguientes.
 
@@ -98,7 +107,7 @@ pública del PC 1. Así ninguna clave privada pasa de un equipo a otro.
 
 - PC 1: `scripts/iniciar.sh` funcionando y `scripts/probar.sh` en verde. Las imágenes quedan
   construidas, así que en clase no hace falta Internet.
-- Respaldo opcional: `docker save taller3/mail:local taller3/rspamd:local taller3/dns:local -o imagenes-taller3.tar` (a un USB).
+- Respaldo opcional: `docker save taller3/mail:local taller3/rspamd:local taller3/dns:local taller3/clamav:local -o imagenes-taller3.tar` (a un USB).
 - PC 2: `git pull` y `scripts/demo-suplantacion.sh` disponible.
 - Los dos PCs en la **misma red** en clase (la misma Wi-Fi). Si la red de la universidad
   aísla a los equipos entre sí, usen el hotspot de un celular.
@@ -122,6 +131,10 @@ en la IP de la red, regenera el SPF del DNS con esa IP, conserva los buzones y a
 firewall: el puerto 25 queda limitado al PC 2 y el milter de Rspamd (11332) solo acepta
 conexiones del contenedor de correo.
 
+> **Las dos garantías del firewall (salida bloqueada y milter restringido) las aplica
+> `scripts/firewall-lab.sh`, que necesita root.** Arrancar solo con `docker compose up`
+> deja el milter y la salida sin restringir: usen `scripts/iniciar.sh` o ejecuten el script.
+
 **Si `scp` no funciona** (el PC 1 sin servidor SSH): copien `certs/ca.crt` con un USB, o
 instalen SSH en el PC 1 (`sudo apt install openssh-server`).
 
@@ -143,8 +156,17 @@ y presenten todo desde un solo PC. Las demos son idénticas.
 scripts/modo.sh casa && scripts/iniciar.sh       # PC 1 (y cualquiera que trabaje solo)
 ```
 
-En el PC 2, si quieren volver a trabajar solos con su propio servidor:
-`scripts/modo.sh casa && scripts/iniciar.sh`. En Thunderbird sigue importada su propia CA.
+En el PC 2, si quieren volver a trabajar solos con su propio servidor, antes hay que
+descartar la CA del PC 1: el PC 2 solo recibió `certs/ca.crt`, sin la clave privada de la CA,
+y `iniciar.sh` no puede emitir un certificado con ella.
+
+```bash
+rm -f certs/ca.crt                  # era la CA del PC 1
+scripts/modo.sh casa && scripts/iniciar.sh
+```
+
+Después importen en Thunderbird la CA nueva (`certs/ca.crt`, sección 4): en el PC 2 no
+estaba importada "su propia" CA, sino la del PC 1.
 
 ---
 
@@ -179,9 +201,8 @@ En el PC 2, si quieren volver a trabajar solos con su propio servidor:
 En casa, en el mismo PC. En clase, **desde el PC 2**.
 
 ```bash
-scripts/comprobar-conexion.sh                    # 10 s: ¿llego al servidor y confío en él?
-LAB_USER=ana@lab.test scripts/probar.sh          # batería completa (pide la contraseña de Ana)
-ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh   # + prueba EICAR, si el antivirus está activo
+scripts/comprobar-conexion.sh                    # comprobación rápida de acceso y TLS
+LAB_USER=ana@lab.test scripts/probar.sh          # 27 pruebas (pide la contraseña de Ana)
 ```
 
 Cada ejecución crea `evidencias/pruebas-FECHA/` con la salida cruda de cada prueba y un
@@ -204,11 +225,11 @@ Cada ejecución crea `evidencias/pruebas-FECHA/` con la salida cruda de cada pru
 | D1 | El 25 recibe correo de un dominio ajeno (control) | `250 queued` |
 | D2 | Suplantación total por el 25 | `554` (DMARC) |
 | D3 | Solo el `From:` visible falso (phishing típico) | `554` (DMARC) |
-| D4, D5 | Adjunto `.exe` rechazado; `.pdf` aceptado | `550` / `250` |
+| D4, D5 | Adjunto `.exe` rechazado (también con `filename*`); `.pdf` aceptado | `550` / `250` |
 | D6 | Lo enviado por 587 sale firmado con DKIM | `d=lab.test; s=taller3-N` |
 | D7 | Autenticada como Ana, sobre correcto pero `From: pedro` (suplantación interna) | `554 Suplantacion interna...` |
 | D8 | SMTP smuggling: el correo escondido no se acepta | 1 solo `250 queued` |
-| D9 | Antivirus: adjunto EICAR rechazado (opcional) | rechazo 5xx (mensaje según Rspamd) |
+| D9 | Antivirus: adjunto EICAR rechazado (ClamAV) | rechazo 5xx (mensaje según Rspamd) |
 | D10 | Fuerza bruta: tras 6 AUTH fallidos se corta la sesión | `421 too many errors` |
 
 > - **D2 y D3 fallan a propósito con DMARC desactivado** (`scripts/dmarc.sh off`): es la demo "antes".
@@ -309,7 +330,7 @@ lo almacenado.
 | 5 | Thunderbird 587/STARTTLS y 993/SSL-TLS | Sección 4 | Capturas de pantalla |
 | 6 | Verificar certificados antes de enviar credenciales | `openssl s_client` del enunciado y `comprobar-conexion.sh` | Salidas de openssl |
 | 7 | Envío Ana ↔ Pedro, captura, versión TLS y suite | Thunderbird + tcpdump (sección 8) | `.pcapng`, A587/A993 |
-| 8 | Rechazo sin TLS y con certificado no confiable | Pruebas automáticas + intento en Thunderbird | A3, A4, B2, B3, C4 |
+| 8 | Rechazo sin TLS y con certificado no confiable | Pruebas automáticas + intento en Thunderbird | A3, A4, B2, B3, B4 |
 | 9 | Inspeccionar el mensaje almacenado | `scripts/ver-buzon.sh pedro` | Salida del script |
 
 `scripts/evidencias-config.sh` (PC 1) guarda las versiones, la configuración efectiva, los
@@ -338,24 +359,25 @@ Igual con `port 993` y `port 25`. Filtro de Wireshark: `smtp || tls`.
 
 ---
 
-## 9. Antivirus (opcional)
+## 9. Antivirus (ClamAV)
 
-Usa entre 1 y 1,5 GB de RAM extra. Actívenlo solo si el PC tiene 8 GB o más.
+El antivirus es **parte del servicio**, no un extra: `clamav-lab` arranca siempre y Rspamd
+depende de su healthcheck. Si Rspamd no puede analizar un mensaje (clamd caído o arrancando),
+**no lo acepta**: devuelve `451 4.7.1` y el cliente lo reintenta. Nunca entra correo sin analizar.
 
 ```bash
-# PC 1: editar .env y poner
-COMPOSE_PROFILES=antivirus
-# luego (la primera vez descarga las firmas: varios minutos, necesita Internet)
-scripts/iniciar.sh
-docker compose logs clamav | head          # ¿firmas oficiales o solo EICAR?
-ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh   # prueba D9 con EICAR
+docker compose logs clamav | head     # version y firmas cargadas
 ```
 
-- La prueba usa **EICAR**, el archivo de prueba estándar de los antivirus: es inofensivo.
-- Si la descarga de firmas oficiales falla al construir, la imagen igual queda lista con una
-  **firma local solo para EICAR**, y el log lo avisa. Para reintentar: `docker compose build --no-cache clamav`.
-- Las firmas quedan congeladas en la fecha de construcción, porque el laboratorio no tiene Internet.
-- Para desactivarlo: `COMPOSE_PROFILES=` en `.env`, `docker compose stop clamav` y `scripts/iniciar.sh`.
+- La primera construcción descarga las firmas oficiales (unos minutos, ~400 MB) y necesita
+  Internet; después quedan dentro de la imagen. En ejecución usa **1–1,5 GB de RAM**.
+- La prueba D9 usa **EICAR**, el archivo de prueba estándar de los antivirus: es inofensivo.
+  Se detecta también renombrado (`.pdf`) o dentro de un `.zip`.
+- Si la descarga de firmas falla al construir, la imagen queda con una **firma local solo
+  para EICAR** y el log lo avisa. Para reintentar: `docker compose build --no-cache clamav`.
+- Las firmas quedan congeladas en la fecha de construcción (el laboratorio no tiene Internet).
+- No se desactiva por configuración: para trabajar sin antivirus hay que editar
+  `docker-compose.yml` y `rspamd/local.d/`.
 
 ---
 
@@ -367,14 +389,14 @@ ANTIVIRUS=1 LAB_USER=ana@lab.test scripts/probar.sh   # prueba D9 con EICAR
 | Capturas | `evidencias/captura-*.pcapng` + pantallazos de Wireshark |
 | Correo recibido | Pantallazo en Thunderbird + `scripts/ver-buzon.sh pedro` |
 | Pruebas negativas | `evidencias/pruebas-*/reporte.html` y sus `.txt` |
-| Diagrama de tramos | `docs/DISENO.md` (tabla de tramos) + diagrama en `entregable/` |
+| Diagrama de tramos | `docs/DISENO.md` (tabla de tramos); el diagrama va en la carpeta `entregable/`, que crea el equipo |
 | Seguridad adicional | `evidencias/demo-*.txt`, `evidencias/dkim-*/`, pruebas D |
 
 Antes de entregar o hacer `git push`:
 
 ```bash
 git status       # no debe aparecer nada de secrets/, ca-privada/, certs/, dkim-publica/ ni .env
-grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir=ca-privada   # vacío
+grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir=ca-privada --exclude=README.md   # vacío
 ```
 
 ---
@@ -404,12 +426,14 @@ grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir
 | El PC 2 no llega a ningún puerto | Redes distintas o red que aísla equipos | Misma Wi-Fi o hotspot; `scripts/comprobar-conexion.sh` |
 | El PC 2 llega a 587/993 pero no al 25 | `PC2_IP` incorrecta en el PC 1 | PC 1: `scripts/modo.sh clase IP_CORRECTA` + `iniciar.sh` |
 | `451 4.7.1 Service unavailable` al enviar | Rspamd todavía arrancando (el correo se reintenta) | Esperar unos segundos |
+| `451 4.7.1 Antivirus no disponible` | ClamAV arrancando o caído; el correo se reintenta | `docker compose ps clamav`; `docker compose logs clamav` |
 | Thunderbird advierte del certificado | CA no importada en **Thunderbird** o CA de otro equipo | Sección 4, paso 1. No aceptar la excepción |
 | `535 Authentication failed` | Contraseña o usuario sin `@lab.test` | Revisar; cambiar con `scripts/crear-usuarios.sh` |
 | `421 too many errors` o envíos frenados | Se acaba de ejecutar D10 (fuerza bruta) | Esperar 1 minuto |
 | `553 not owned by user` desde Thunderbird | Identidad con una dirección distinta de la cuenta | Usar la identidad de la propia cuenta |
 | D2/D3 dicen "250 queued" | DMARC desactivado | `scripts/dmarc.sh on` |
 | Tras reiniciar el PC, el contenedor puede salir a Internet | Las reglas de iptables se pierden | `scripts/iniciar.sh` |
+| Se arrancó solo con `docker compose up` | El firewall no se aplicó: milter y salida sin restringir | `sudo scripts/firewall-lab.sh` (o `scripts/iniciar.sh`) |
 
 ---
 
@@ -417,29 +441,30 @@ grep -rIl "PRIVATE KEY" . --exclude-dir=.git --exclude-dir=secrets --exclude-dir
 
 ```
 taller3_seguridad/
-├── docker-compose.yml          4 servicios (clamav opcional), red 172.30.53.0/24, límites y privilegios
+├── docker-compose.yml          4 servicios (ClamAV incluido), red 172.30.53.0/24, límites y privilegios
 ├── .env.example                Referencia; el .env real lo escribe scripts/modo.sh
 ├── docs/DISENO.md              Decisiones, límites, tramos y rúbrica
 ├── mail/                       Postfix + Dovecot (Dockerfile, entrypoint, config/)
-├── rspamd/                     local.d/, override.d/, rspamd.local.lua (regla propia), opcional/antivirus.conf
+├── rspamd/                     local.d/ (DKIM, DMARC, antivirus, force_actions), override.d/, rspamd.local.lua (regla propia)
 ├── dns/                        bind9: zona lab.test (SPF, DKIM, DMARC on/off)
-├── clamav/                     ClamAV opcional (firmas oficiales + respaldo EICAR)
+├── clamav/                     ClamAV (firmas oficiales + respaldo EICAR)
 ├── scripts/
 │   ├── modo.sh                 casa | clase | cliente | estado
 │   ├── iniciar.sh              PC 1 · arranca o repara todo
 │   ├── comprobar-conexion.sh   Cualquier PC · ¿llego al servidor y confío en él?
 │   ├── probar.sh               Pruebas A–D + reporte HTML
-│   ├── demo-suplantacion.sh    Ataque por el 25 (total | cabecera)
+│   ├── demo-suplantacion.sh    Ataque por el 25 (total | cabecera | interna · 587)
 │   ├── demo-smuggling.sh       SMTP smuggling
 │   ├── dmarc.sh                PC 1 · on | off | estado
 │   ├── verificar-dkim.sh       PC 1 · firma intacta vs. alterada
 │   ├── rotar-dkim.sh           PC 1 · rotar | retirar | estado
 │   ├── renovar-certificado.sh  PC 1 · certificado TLS con clave nueva
-│   ├── crear-ca.sh  crear-usuarios.sh  crear-dkim.sh  lib-dkim.sh   (los usa iniciar.sh)
+│   ├── crear-ca.sh  crear-usuarios.sh  crear-dkim.sh   (los usa iniciar.sh)
+│   ├── lib-dkim.sh             Auxiliar: genera claves DKIM (crear-dkim · rotar-dkim)
 │   ├── firewall-lab.sh         PC 1 · DOCKER-USER (lo usa iniciar.sh)
 │   ├── ver-buzon.sh            PC 1 · actividad 9
 │   └── evidencias-config.sh    PC 1 · versiones y configuración efectiva
-└── entregable/                 Informe, diagrama y presentación
+└── entregable/                 (lo crea el equipo) informe, diagrama y presentación
 
 Generados en cada equipo, fuera de Git:
   .env  certs/  secrets/mail/  secrets/dkim/  dkim-publica/  ca-privada/  evidencias/
