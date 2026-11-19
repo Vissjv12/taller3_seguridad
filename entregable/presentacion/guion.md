@@ -27,7 +27,7 @@
 
 > Son dos PCs. El **PC 1 es el servidor**: ahí está Ana con su Thunderbird. El **PC 2** es Pedro, y también hace de atacante en las pruebas.
 >
-> Todo lo que entra al PC 1 pasa primero por un **firewall**. Los puertos 587 y 993 están abiertos, pero el **25 solo acepta conexiones del PC 2**.
+> Todo lo que entra al PC 1 pasa primero por un **firewall**. El **587** y el **993** se publican en la IP del PC 1; el **25** queda abierto a la **red del grupo** para recibir correo de otros equipos (en casa, solo en localhost).
 
 `[clic]`
 
@@ -94,12 +94,15 @@
 > - Tiene límites de memoria, CPU y procesos.
 > - Solo ve la clave DKIM, **en modo lectura**.
 
-`[clic]` `[clic]` `[clic]` (una por regla)
+`[clic]` `[clic]` (una por regla)
 
-> Y el firewall aplica tres reglas:
-> - El **puerto 25**, solo desde el PC 2.
-> - El **filtro Rspamd**, solo desde el contenedor de correo.
+> Y el firewall aplica dos reglas:
+> - El **milter de Rspamd**, solo desde el contenedor de correo.
 > - **Ninguna salida a Internet.**
+>
+> El **puerto 25** no se filtra por IP: en clase lo usa la red del grupo y en casa solo
+> escucha en localhost. En un servidor real también iría abierto; ahí defienden
+> SPF, DKIM, DMARC y el propio Rspamd.
 
 `[clic]`
 

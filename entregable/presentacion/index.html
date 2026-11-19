@@ -218,7 +218,7 @@ svg.dg { width: 100%; flex: 1; min-height: 0; margin-top: 32px; overflow: visibl
     <text class="lbl f-ok" x="485" y="390" text-anchor="middle">587</text>
     <text class="lbl f-ok" x="485" y="436" text-anchor="middle">993</text>
     <text class="lbl f-warn" x="485" y="482" text-anchor="middle">25</text>
-    <text class="mm" x="485" y="520" text-anchor="middle">solo PC 2</text>
+    <text class="mm" x="485" y="520" text-anchor="middle">red del grupo</text>
 
     <!-- Paso 1: contenedor de correo -->
     <g data-paso="1">
@@ -387,9 +387,8 @@ rspamd:
   volumes:
     - ./secrets/dkim:/run/lab-dkim/privada<span class="ok">:ro</span></div>
     <div class="lista">
-      <div data-paso="1"><b><i class="marca" style="background:var(--warn)"></i>Puerto 25</b><span>solo desde el PC 2</span></div>
-      <div data-paso="2"><b><i class="marca" style="background:var(--info)"></i>Milter de Rspamd</b><span>solo desde el contenedor de correo</span></div>
-      <div data-paso="3"><b><i class="marca" style="background:var(--bad)"></i>Internet</b><span>ninguna salida, ni por configuración ni por red</span></div>
+      <div data-paso="1"><b><i class="marca" style="background:var(--info)"></i>Milter de Rspamd</b><span>solo desde el contenedor de correo</span></div>
+      <div data-paso="2"><b><i class="marca" style="background:var(--bad)"></i>Internet</b><span>ninguna salida, ni por configuración ni por red</span></div>
     </div>
   </div>
   <div class="franja">
