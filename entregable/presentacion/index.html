@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taller 3 · Correo seguro</title>
+<style>
+@font-face { font-family: "Plex Sans"; src: url(fuentes/ibm-plex-sans-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Plex Sans"; src: url(fuentes/ibm-plex-sans-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: block; }
+@font-face { font-family: "Plex Mono"; src: url(fuentes/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Plex Mono"; src: url(fuentes/ibm-plex-mono-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: block; }
+
+/* Oscuro reforzado para proyector (bordes >= 3:1 sobre el fondo) */
+:root {
+  --bg: #0b100e;
+  --panel: #16211b;
+  --line: #4d6b5a;
+  --fg: #e4ece6;
+  --muted: #9fb1a6;
+  --ok: #62d08f;      /* cifrado / correcto */
+  --warn: #e6b45c;    /* en claro / puerto 25 */
+  --bad: #f07b6b;     /* rechazado / bloqueado */
+  --info: #7fb8e8;    /* tráfico interno */
+  --sans: "Plex Sans", system-ui, sans-serif;
+  --mono: "Plex Mono", ui-monospace, monospace;
+}
+/* Tema claro de reserva (tecla T) para aulas con mucha luz */
+:root[data-theme="light"] {
+  --bg: #f3f5f1;
+  --panel: #ffffff;
+  --line: #7d8f84;
+  --fg: #13201a;
+  --muted: #47584e;
+  --ok: #157a43;
+  --warn: #8f5a00;
+  --bad: #b3321f;
+  --info: #1d5c93;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+body { font-family: var(--sans); -webkit-font-smoothing: antialiased; transition: background .3s; }
+::selection { background: var(--ok); color: var(--bg); }
+
+/* Escenario 16:9 fijo, escalado a la pantalla */
+.deck { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+  transform: translate(-50%, -50%) scale(var(--s, 1)); }
+.slide { position: absolute; inset: 0; padding: 88px 120px 130px; display: flex; flex-direction: column;
+  opacity: 0; visibility: hidden; transition: opacity .45s cubic-bezier(.16,1,.3,1), visibility 0s .45s; }
+.slide.on { opacity: 1; visibility: visible; transition: opacity .45s cubic-bezier(.16,1,.3,1); }
+
+.pie { position: absolute; left: 120px; right: 120px; bottom: 52px; display: flex; justify-content: space-between;
+  font: 400 24px/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+h1 { font: 600 104px/1.0 var(--sans); letter-spacing: -0.035em; text-wrap: balance; }
+h2 { font: 600 66px/1.08 var(--sans); letter-spacing: -0.025em; text-wrap: balance; }
+.sub { font-size: 32px; line-height: 1.4; color: var(--muted); max-width: 60ch; text-wrap: pretty; margin-top: 18px; }
+code { font-family: var(--mono); }
+
+/* Revelado por pasos: cada clic muestra el siguiente [data-paso] */
+[data-paso] { transition: opacity .5s cubic-bezier(.16,1,.3,1), transform .5s cubic-bezier(.16,1,.3,1); }
+[data-paso]:not(.visto) { opacity: 0; transform: translateY(12px); }
+svg [data-paso]:not(.visto) { transform: none; }
+
+/* Portada */
+.portada { display: grid; grid-template-columns: 1fr 720px; gap: 90px; align-items: center; }
+.portada h1 { max-width: none; margin-bottom: 20px; }
+.puertos { display: flex; gap: 52px; margin-top: 64px; }
+.puertos b { display: block; font: 600 52px/1 var(--mono); }
+.puertos span { display: block; font-size: 25px; line-height: 1.3; color: var(--muted); margin-top: 12px; }
+.cabecera { background: var(--panel); border: 2px solid var(--line); border-radius: 16px; padding: 40px 44px;
+  font: 400 26px/1.6 var(--mono); white-space: pre; box-shadow: 0 30px 70px -30px rgb(0 0 0 / .55); }
+.cabecera .k { color: var(--muted); }
+.pie-cab { font-size: 24px; color: var(--muted); margin-top: 18px; }
+
+/* Terminal */
+.term { background: var(--panel); border: 2px solid var(--line); border-radius: 16px; padding: 36px 42px;
+  font: 400 26px/1.62 var(--mono); white-space: pre; box-shadow: 0 30px 70px -30px rgb(0 0 0 / .55); }
+.term .p, .term .srv { color: var(--muted); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .info { color: var(--info); }
+.term .bad { font-weight: 600; }
+
+/* Columnas de evidencia + explicación */
+.dos { display: grid; grid-template-columns: 1040px 1fr; gap: 72px; margin-top: 40px; align-items: center; flex: 1; }
+.lista > div { padding: 22px 0; border-top: 2px solid var(--line); }
+.lista > div:last-child { border-bottom: 2px solid var(--line); }
+.lista b { display: block; font: 600 36px/1.15 var(--sans); }
+.lista b small { font: 400 26px var(--mono); color: var(--muted); margin-left: 14px; }
+.lista span { display: block; font-size: 28px; line-height: 1.35; color: var(--muted); margin-top: 6px; }
+.lista .marca { display: inline-block; width: 18px; height: 18px; border-radius: 4px; margin-right: 16px; vertical-align: 2px; }
+
+/* Registros DNS */
+.registros { margin: auto 0; }
+.reg { display: grid; grid-template-columns: 960px 1fr; gap: 60px; padding: 26px 0; border-top: 2px solid var(--line); align-items: center; }
+.reg:last-child { border-bottom: 2px solid var(--line); }
+.reg .cmd { font: 400 24px/1.3 var(--mono); color: var(--muted); }
+.reg .val { font: 400 34px/1.35 var(--mono); margin-top: 8px; }
+.reg b { display: block; font: 600 38px/1.1 var(--sans); }
+.reg > div > span { display: block; font-size: 28px; line-height: 1.35; color: var(--muted); margin-top: 6px; }
+
+/* Franja de tecnologías */
+.franja { display: flex; gap: 56px; margin-top: auto; padding-top: 28px; font-size: 28px; color: var(--muted); flex-wrap: wrap; }
+.franja b { color: var(--fg); font-weight: 600; }
+
+/* Explicación del ataque */
+.relato p { font-size: 34px; line-height: 1.4; text-wrap: pretty; }
+.relato p + p { margin-top: 32px; }
+.relato .nota { font-size: 28px; color: var(--muted); }
+
+/* Diagramas */
+svg.dg { width: 100%; flex: 1; min-height: 0; margin-top: 32px; overflow: visible; }
+.dg text { font-family: var(--sans); fill: var(--fg); }
+.dg .t { font-weight: 600; font-size: 34px; }
+.dg .d { font-size: 27px; fill: var(--muted); }
+.dg .mm { font-family: var(--mono); font-size: 26px; fill: var(--muted); }
+.dg .lbl { font-family: var(--mono); font-size: 30px; font-weight: 600; }
+.dg .caja { fill: var(--panel); stroke: var(--line); stroke-width: 3; }
+.dg .recinto { fill: none; stroke: var(--line); stroke-width: 3; }
+.dg .red { fill: none; stroke: var(--info); stroke-width: 3; stroke-dasharray: 12 9; }
+.dg .flujo { fill: none; stroke-width: 5; }
+.s-ok { stroke: var(--ok) !important; } .s-warn { stroke: var(--warn) !important; } .s-bad { stroke: var(--bad) !important; } .s-info { stroke: var(--info) !important; }
+.f-ok { fill: var(--ok) !important; } .f-warn { fill: var(--warn) !important; } .f-bad { fill: var(--bad) !important; } .f-info { fill: var(--info) !important; }
+/* Momento animado: las conexiones se trazan al aparecer */
+.slide.on .visto .trazo, .slide.on .trazo.base { stroke-dasharray: 400; stroke-dashoffset: 400; animation: trazar .8s cubic-bezier(.16,1,.3,1) .15s forwards; }
+@keyframes trazar { to { stroke-dashoffset: 0; } }
+
+.leyenda { display: flex; gap: 52px; font-size: 26px; color: var(--muted); margin-top: 18px; }
+.leyenda i { display: inline-block; width: 40px; height: 6px; border-radius: 3px; vertical-align: middle; margin-right: 14px; }
+
+/* Cierre */
+.cierre { display: grid; grid-template-columns: 700px 1fr; gap: 80px; align-items: center; flex: 1; }
+.cifra { font: 600 260px/0.9 var(--sans); letter-spacing: -0.05em; color: var(--ok); font-variant-numeric: tabular-nums; }
+.cifra-txt { font-size: 40px; margin-top: 24px; }
+.checks div { display: flex; gap: 22px; align-items: flex-start; font-size: 32px; line-height: 1.35; padding: 20px 0; border-top: 2px solid var(--line); }
+.checks div:last-child { border-bottom: 2px solid var(--line); }
+.checks svg { flex: none; width: 40px; height: 40px; margin-top: 2px; }
+.checks code { color: var(--ok); font-weight: 600; margin-right: 6px; }
+.slide.on .checks div { opacity: 0; animation: aparece .6s cubic-bezier(.16,1,.3,1) forwards; }
+.slide.on .checks div:nth-child(1) { animation-delay: .4s; }
+.slide.on .checks div:nth-child(2) { animation-delay: .8s; }
+.slide.on .checks div:nth-child(3) { animation-delay: 1.2s; }
+.slide.on .checks div:nth-child(4) { animation-delay: 1.6s; }
+@keyframes aparece { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+.preguntas { font: 600 48px/1 var(--sans); margin-top: 48px; color: var(--muted); }
+
+.ayuda { position: fixed; right: 20px; bottom: 14px; font: 400 15px var(--mono); color: var(--muted); transition: opacity .4s; }
+.usado .ayuda { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, .slide, .slide.on { transition: none !important; }
+  .slide.on .trazo { animation: none !important; stroke-dasharray: none !important; }
+  .slide.on .checks div { animation: none; opacity: 1; }
+}
+@media print {
+  @page { size: 1920px 1080px; margin: 0; }
+  html, body { overflow: visible; height: auto; }
+  .deck { position: static; transform: none; height: auto; }
+  .slide { position: relative; height: 1080px; opacity: 1; visibility: visible; break-after: page; }
+  [data-paso] { opacity: 1 !important; transform: none !important; }
+  .checks div { opacity: 1 !important; }
+  .ayuda { display: none; }
+}
+</style>
+</head>
+<body>
+<main class="deck" id="deck">
+
+<!-- 1 · Portada -->
+<section class="slide portada">
+  <div>
+    <h1>Correo con TLS<br>y seguridad</h1>
+    <p class="sub">Un servidor de correo de laboratorio para <code>lab.test</code>, en contenedores Docker y endurecido capa por capa.</p>
+    <div class="puertos">
+      <div><b class="ok">587</b><span>Envío con STARTTLS</span></div>
+      <div><b class="ok">993</b><span>Lectura con TLS</span></div>
+      <div><b class="warn">25</b><span>Recepción con DMARC</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="cabecera"><span class="k">From:</span> Ana &lt;ana@lab.test&gt;
+<span class="k">To:</span> Pedro &lt;pedro@lab.test&gt;
+<span class="k">Received:</span> by mail.lab.test (Postfix)
+  using <span class="ok">TLSv1.3</span> with cipher
+  TLS_AES_256_GCM_SHA384
+<span class="k">DKIM-Signature:</span> v=1; a=rsa-sha256;
+  <span class="ok">d=lab.test; s=taller3-1;</span></div>
+    <p class="pie-cab">Cabeceras de un correo de Ana a Pedro (Ctrl+U en Thunderbird)</p>
+  </div>
+  <footer class="pie"><span>Taller 3 · Seguridad</span><span class="n"></span></footer>
+</section>
+
+<!-- 2 · Arquitectura -->
+<section class="slide">
+  <h2>Arquitectura</h2>
+  <svg class="dg" viewBox="0 0 1680 640" role="img" aria-label="PC 2 conectado al PC 1; en el PC 1 un firewall y cuatro contenedores Docker">
+    <defs>
+      <marker id="a-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path class="f-ok" d="M0 0L10 5L0 10z"/></marker>
+      <marker id="a-info" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path class="f-info" d="M0 0L10 5L0 10z"/></marker>
+    </defs>
+
+    <!-- PC 2 -->
+    <rect class="caja" x="0" y="300" width="280" height="190" rx="14"/>
+    <text class="t" x="30" y="356">PC 2</text>
+    <text class="d" x="30" y="400">Pedro</text>
+    <text class="d" x="30" y="438">pruebas y ataques</text>
+    <path class="flujo trazo base s-ok" d="M280 420 H392" marker-end="url(#a-ok)"/>
+
+    <!-- PC 1 -->
+    <rect class="recinto" x="330" y="0" width="1350" height="640" rx="20"/>
+    <text class="t" x="364" y="52" style="font-size:30px">PC 1 · servidor</text>
+
+    <rect class="caja" x="370" y="90" width="230" height="110" rx="14"/>
+    <text class="t" x="398" y="138" style="font-size:30px">Ana</text>
+    <text class="d" x="398" y="176">Thunderbird</text>
+    <path class="flujo trazo base s-ok" d="M485 200 V246" marker-end="url(#a-ok)"/>
+
+    <rect class="caja s-warn" x="400" y="252" width="170" height="350" rx="14"/>
+    <text class="t" x="485" y="306" text-anchor="middle" style="font-size:28px">Firewall</text>
+    <text class="lbl f-ok" x="485" y="390" text-anchor="middle">587</text>
+    <text class="lbl f-ok" x="485" y="436" text-anchor="middle">993</text>
+    <text class="lbl f-warn" x="485" y="482" text-anchor="middle">25</text>
+    <text class="mm" x="485" y="520" text-anchor="middle">solo PC 2</text>
+
+    <!-- Paso 1: contenedor de correo -->
+    <g data-paso="1">
+      <rect class="red" x="620" y="80" width="1030" height="540" rx="18"/>
+      <text class="mm f-info" x="650" y="118">red Docker</text>
+
+      <rect x="660" y="140" width="400" height="96" rx="14" fill="none" class="s-bad" stroke-width="3" stroke-dasharray="10 8"/>
+      <path class="s-bad" stroke-width="5" stroke-linecap="round" d="M692 172l26 26M718 172l-26 26"/>
+      <text class="t" x="740" y="182" style="font-size:28px">Salida a Internet</text>
+      <text class="d" x="740" y="218">bloqueada</text>
+      <path class="flujo s-bad" d="M860 280 V238" stroke-dasharray="7 7"/>
+
+      <rect class="caja s-ok" x="660" y="280" width="400" height="180" rx="14"/>
+      <text class="t" x="690" y="332">mail-lab</text>
+      <text class="d" x="690" y="376">Postfix · SMTP</text>
+      <text class="d" x="690" y="416">Dovecot · IMAP</text>
+      <path class="flujo trazo s-ok" d="M570 370 H654" marker-end="url(#a-ok)"/>
+
+      <rect class="caja s-warn" x="660" y="500" width="400" height="96" rx="14"/>
+      <text class="t" x="690" y="542" style="font-size:28px">Buzones Maildir</text>
+      <text class="d" x="690" y="578">texto en claro</text>
+      <path class="flujo trazo s-info" d="M860 462 V494" marker-end="url(#a-info)"/>
+    </g>
+
+    <!-- Paso 2: filtrado y DNS -->
+    <g data-paso="2">
+      <rect class="caja s-info" x="1220" y="280" width="400" height="180" rx="14"/>
+      <text class="t" x="1250" y="332">rspamd-lab</text>
+      <text class="d" x="1250" y="376">SPF · DKIM · DMARC</text>
+      <text class="d" x="1250" y="416">regla propia en Lua</text>
+      <path class="flujo trazo s-info" d="M1062 370 H1214" marker-end="url(#a-info)"/>
+      <text class="mm" x="1140" y="352" text-anchor="middle">milter</text>
+
+      <rect class="caja" x="1220" y="140" width="400" height="96" rx="14"/>
+      <text class="t" x="1250" y="182" style="font-size:28px">dns-lab</text>
+      <text class="d" x="1250" y="218">BIND · zona lab.test</text>
+      <path class="flujo trazo s-info" d="M1420 278 V242" marker-end="url(#a-info)"/>
+
+      <rect class="caja" x="1220" y="500" width="400" height="96" rx="14"/>
+      <text class="t" x="1250" y="542" style="font-size:28px">clamav-lab</text>
+      <text class="d" x="1250" y="578">antivirus ClamAV</text>
+      <path class="flujo trazo s-info" d="M1420 462 V494" marker-end="url(#a-info)"/>
+    </g>
+  </svg>
+  <div class="leyenda">
+    <span><i style="background:var(--ok)"></i>cifrado</span>
+    <span><i style="background:var(--warn)"></i>en claro · puerto 25</span>
+    <span><i style="background:var(--info)"></i>interno</span>
+    <span><i style="background:var(--bad)"></i>bloqueado</span>
+  </div>
+  <footer class="pie"><span>Arquitectura</span><span class="n"></span></footer>
+</section>
+
+<!-- 3 · Tramos -->
+<section class="slide">
+  <h2>Cada tramo, su protección</h2>
+  <p class="sub">TLS protege la conexión, no el mensaje.</p>
+  <svg class="dg" viewBox="0 0 1680 560" role="img" aria-label="Recorrido de Ana a Pedro y llegada por el puerto 25">
+    <defs>
+      <marker id="b-ok" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path class="f-ok" d="M0 0L10 5L0 10z"/></marker>
+      <marker id="b-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path class="f-warn" d="M0 0L10 5L0 10z"/></marker>
+    </defs>
+    <rect class="caja" x="0" y="40" width="240" height="120" rx="14"/>
+    <text class="t" x="120" y="96" text-anchor="middle">Ana</text>
+    <text class="d" x="120" y="134" text-anchor="middle">Thunderbird</text>
+
+    <rect class="caja s-ok" x="560" y="40" width="260" height="120" rx="14"/>
+    <text class="t" x="690" y="96" text-anchor="middle">Servidor</text>
+    <text class="d" x="690" y="134" text-anchor="middle">mail.lab.test</text>
+
+    <rect class="caja s-warn" x="1000" y="40" width="240" height="120" rx="14"/>
+    <text class="t" x="1120" y="96" text-anchor="middle">Buzón</text>
+    <text class="d" x="1120" y="134" text-anchor="middle">Maildir</text>
+
+    <rect class="caja" x="1440" y="40" width="240" height="120" rx="14"/>
+    <text class="t" x="1560" y="96" text-anchor="middle">Pedro</text>
+    <text class="d" x="1560" y="134" text-anchor="middle">Thunderbird</text>
+
+    <path class="flujo trazo base s-ok" d="M242 100 H552" stroke-width="7" marker-end="url(#b-ok)"/>
+    <path class="flujo trazo base s-warn" d="M822 100 H992" stroke-width="7" marker-end="url(#b-warn)"/>
+    <path class="flujo trazo base s-ok" d="M1242 100 H1432" stroke-width="7" marker-end="url(#b-ok)"/>
+
+    <text class="lbl f-ok" x="400" y="216" text-anchor="middle">587 · STARTTLS</text>
+    <text class="d" x="400" y="256" text-anchor="middle">contraseña solo con TLS</text>
+    <text class="d" x="400" y="292" text-anchor="middle">sin TLS: 530 rechazado</text>
+
+    <text class="lbl f-warn" x="910" y="216" text-anchor="middle">en reposo</text>
+    <text class="d" x="910" y="256" text-anchor="middle">texto en claro</text>
+    <text class="d" x="910" y="292" text-anchor="middle">sin cifrado E2E</text>
+
+    <text class="lbl f-ok" x="1340" y="216" text-anchor="middle">993 · TLS</text>
+    <text class="d" x="1340" y="256" text-anchor="middle">cifrado desde</text>
+    <text class="d" x="1340" y="292" text-anchor="middle">el primer byte</text>
+
+    <g data-paso="1">
+      <rect class="caja s-bad" x="560" y="420" width="260" height="120" rx="14"/>
+      <text class="t" x="690" y="474" text-anchor="middle">Otro servidor</text>
+      <text class="d" x="690" y="512" text-anchor="middle">o atacante</text>
+      <path class="flujo s-warn" d="M690 416 V170" stroke-width="7" stroke-dasharray="16 11" marker-end="url(#b-warn)"/>
+      <text class="lbl f-warn" x="880" y="452">25 · servidor a servidor</text>
+      <text class="d" x="880" y="494">SPF + DKIM + DMARC p=reject prueban quién envía.</text>
+      <text class="d" x="880" y="530">TLS solo oportunista: no garantiza confidencialidad.</text>
+    </g>
+  </svg>
+  <div class="leyenda"><span><i style="background:var(--ok)"></i>cifrado</span><span><i style="background:var(--warn)"></i>en claro · autenticidad</span></div>
+  <footer class="pie"><span>Tramos</span><span class="n"></span></footer>
+</section>
+
+<!-- 4 · Cifrado -->
+<section class="slide">
+  <h2>Cifrado: el certificado se verifica</h2>
+  <div class="dos">
+    <div class="term"><span class="p">$</span> openssl s_client -starttls smtp \
+    -connect mail.lab.test:587 -CAfile certs/ca.crt
+<span class="srv">depth=1 CN = CA Taller3 - PC1
+depth=0 CN = mail.lab.test</span>
+<span data-paso="1" class="ok">Verification: OK</span>
+<span data-paso="1">New, <span class="ok">TLSv1.3</span>, Cipher is TLS_AES_256_GCM_SHA384</span></div>
+    <div class="lista">
+      <div><b>Postfix<small>3.7</small></b><span>SMTP: recibe en 25, envía en 587</span></div>
+      <div><b>Dovecot<small>2.3</small></b><span>IMAP en 993 y buzones</span></div>
+      <div><b>OpenSSL<small>3.0</small></b><span>CA propia, ECDSA P-256, TLS ≥ 1.2</span></div>
+      <div><b>SHA512-CRYPT</b><span>contraseñas solo como hash</span></div>
+    </div>
+  </div>
+  <footer class="pie"><span>Tecnologías · Cifrado</span><span class="n"></span></footer>
+</section>
+
+<!-- 5 · Autenticidad -->
+<section class="slide">
+  <h2>Autenticidad: el DNS dice quién envía</h2>
+  <div class="registros">
+    <div class="reg" data-paso="0">
+      <div><div class="cmd">$ dig TXT lab.test</div><div class="val">"v=spf1 ip4:<span class="warn">IP-del-PC1</span> <span class="ok">-all</span>"</div></div>
+      <div><b>SPF</b><span>solo el PC 1 puede enviar</span></div>
+    </div>
+    <div class="reg" data-paso="1">
+      <div><div class="cmd">$ dig TXT taller3-1._domainkey.lab.test</div><div class="val">"v=DKIM1; k=rsa; p=MIIBIjANBgkq…"</div></div>
+      <div><b>DKIM</b><span>firma RSA 2048, rotación en dos pasos</span></div>
+    </div>
+    <div class="reg" data-paso="2">
+      <div><div class="cmd">$ dig TXT _dmarc.lab.test</div><div class="val">"v=DMARC1; <span class="bad">p=reject</span>; adkim=s; aspf=s"</div></div>
+      <div><b>DMARC</b><span>si no cuadra, se rechaza</span></div>
+    </div>
+  </div>
+  <div class="franja">
+    <span><b>Rspamd 3.4</b> verifica y firma</span>
+    <span><b>BIND 9.18</b> publica la zona</span>
+    <span><b>ClamAV 1.0</b> analiza adjuntos</span>
+  </div>
+  <footer class="pie"><span>Tecnologías · Autenticidad</span><span class="n"></span></footer>
+</section>
+
+<!-- 6 · Aislamiento -->
+<section class="slide">
+  <h2>Aislamiento: cada pieza, lo mínimo</h2>
+  <div class="dos" style="grid-template-columns: 860px 1fr">
+    <div class="term"><span class="p"># docker-compose.yml</span>
+rspamd:
+  image: taller3/rspamd:local
+  <span class="ok">cap_drop: [ALL]</span>
+  <span class="ok">security_opt: ["no-new-privileges:true"]</span>
+  mem_limit: 768m
+  cpus: 1.0
+  pids_limit: 200
+  volumes:
+    - ./secrets/dkim:/run/lab-dkim/privada<span class="ok">:ro</span></div>
+    <div class="lista">
+      <div data-paso="1"><b><i class="marca" style="background:var(--warn)"></i>Puerto 25</b><span>solo desde el PC 2</span></div>
+      <div data-paso="2"><b><i class="marca" style="background:var(--info)"></i>Milter de Rspamd</b><span>solo desde el contenedor de correo</span></div>
+      <div data-paso="3"><b><i class="marca" style="background:var(--bad)"></i>Internet</b><span>ninguna salida, ni por configuración ni por red</span></div>
+    </div>
+  </div>
+  <div class="franja">
+    <span><b>Docker Compose</b> v2</span>
+    <span><b>Debian</b> 12-slim</span>
+    <span><b>iptables</b> DOCKER-USER</span>
+    <span><b>Bash</b> arranque repetible</span>
+  </div>
+  <footer class="pie"><span>Tecnologías · Aislamiento</span><span class="n"></span></footer>
+</section>
+
+<!-- 7 · Ataque rechazado -->
+<section class="slide">
+  <h2>Un ataque, rechazado</h2>
+  <div class="dos" style="grid-template-columns: 900px 1fr">
+    <div class="term"><span class="p">PC 2 $</span> nc mail.lab.test 25
+<span class="srv">220 mail.lab.test ESMTP Postfix</span>
+EHLO atacante
+MAIL FROM:&lt;ana@lab.test&gt;
+RCPT TO:&lt;pedro@lab.test&gt;
+DATA
+From: Ana &lt;ana@lab.test&gt;
+Subject: Urgente: confirma tu clave hoy
+.
+<span data-paso="1" class="bad">554 5.7.1 Rejected due to DMARC Policy</span></div>
+    <div class="relato">
+      <p>Desde el PC 2, el «atacante» se hace pasar por Ana usando el puerto 25.</p>
+      <p data-paso="1">Su IP no está en el SPF y el correo no lleva firma DKIM: <span class="bad">DMARC lo rechaza</span>.</p>
+      <p data-paso="2" class="nota">Con DMARC apagado (<code>dmarc.sh off</code>) el mismo correo llega a Pedro.</p>
+    </div>
+  </div>
+  <div class="franja">
+    <span><b>Thunderbird</b> cliente</span>
+    <span><b>openssl s_client</b> TLS</span>
+    <span><b>tcpdump · Wireshark</b> capturas</span>
+    <span><b>probar.sh</b> pruebas automáticas</span>
+  </div>
+  <footer class="pie"><span>Demostración</span><span class="n"></span></footer>
+</section>
+
+<!-- 8 · Resultado -->
+<section class="slide">
+  <h2>Resultado</h2>
+  <div class="cierre">
+    <div>
+      <div class="cifra">27/27</div>
+      <p class="cifra-txt">pruebas automáticas pasan</p>
+    </div>
+    <div class="checks">
+      <div><svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="s-ok"><path d="M4 12.5l5 5L20 6.5"/></svg><span><code>A</code>TLS verificado, versiones antiguas fuera</span></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="s-ok"><path d="M4 12.5l5 5L20 6.5"/></svg><span><code>B</code>sin TLS no hay contraseña ni envío</span></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="s-ok"><path d="M4 12.5l5 5L20 6.5"/></svg><span><code>C</code>cada usuario envía solo como él mismo</span></div>
+      <div><svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="s-ok"><path d="M4 12.5l5 5L20 6.5"/></svg><span><code>D</code>suplantación, smuggling, virus y fuerza bruta rechazados</span></div>
+      <p class="preguntas">¿Preguntas?</p>
+    </div>
+  </div>
+  <footer class="pie"><span>Taller 3 · Seguridad</span><span class="n"></span></footer>
+</section>
+
+</main>
+<div class="ayuda">← → avanzar · F pantalla completa · T tema claro</div>
+
+<script>
+const deck = document.getElementById('deck');
+const slides = [...deck.querySelectorAll('.slide')];
+const pasos = slides.map(s => Math.max(0, ...[...s.querySelectorAll('[data-paso]')].map(e => +e.dataset.paso)));
+let i = Math.max(0, Math.min(slides.length - 1, (parseInt(location.hash.slice(1), 10) || 1) - 1));
+let p = 0;
+slides.forEach((s, k) => s.querySelector('.pie .n').textContent = `${k + 1} / ${slides.length}`);
+
+try { const t = localStorage.getItem('tema'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+function pintar() {
+  slides.forEach((s, k) => s.classList.toggle('on', k === i));
+  slides[i].querySelectorAll('[data-paso]').forEach(e => e.classList.toggle('visto', +e.dataset.paso <= p));
+  history.replaceState(null, '', '#' + (i + 1));
+}
+function sig() { if (p < pasos[i]) p++; else if (i < slides.length - 1) { i++; p = 0; } pintar(); }
+function ant() { if (p > 0) p--; else if (i > 0) { i--; p = pasos[i]; } pintar(); }
+function ir(n) { i = n; p = pasos[i]; pintar(); }
+function escalar() { deck.style.setProperty('--s', Math.min(innerWidth / 1920, innerHeight / 1080)); }
+
+addEventListener('resize', escalar);
+addEventListener('keydown', e => {
+  document.body.classList.add('usado');
+  const k = e.key;
+  if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); sig(); }
+  else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); ant(); }
+  else if (k === 'Home') ir(0);
+  else if (k === 'End') ir(slides.length - 1);
+  else if (k.toLowerCase() === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  else if (k.toLowerCase() === 't') {
+    const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+    try { localStorage.setItem('tema', t); } catch (e) {}
+  }
+});
+addEventListener('click', e => { document.body.classList.add('usado'); e.clientX > innerWidth / 3 ? sig() : ant(); });
+escalar(); ir(i);
+</script>
+</body>
+</html>
