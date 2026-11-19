@@ -139,6 +139,7 @@ Si la pregunta es técnica o sobre configuración, contesta A. Si es sobre conce
 | Pregunta | Quién | Respuesta corta |
 |---|---|---|
 | ¿Por qué el buzón queda en claro? | B | TLS solo cifra el transporte. Para cifrar el contenido almacenado hace falta cifrado de extremo a extremo (S/MIME o PGP), que queda fuera del alcance del taller. |
+| ¿Por qué el 25 no está restringido por IP? | A | En un servidor real el 25 tiene que aceptar correo de cualquier MTA, y aquí se comporta igual: lo que decide si un correo entra es SPF/DKIM/DMARC y Rspamd, no la IP. En casa, además, solo escucha en localhost. |
 | ¿Qué pasa si se cae el antivirus? | A | El correo no se acepta: responde con un error temporal 451 y el cliente lo reintenta. Nunca entra correo sin analizar. |
 | ¿Qué es SMTP smuggling? | A | Esconder un segundo correo dentro de otro usando finales de línea raros. Postfix está configurado para normalizarlos y no aceptar comandos encadenados sin autenticar. |
 | ¿Y si Ana, ya autenticada, pone `From: pedro`? | A | Postfix ata el remitente técnico al usuario, y una regla propia de Rspamd ata el `From:` visible. Responde con un 554 de «suplantación interna». |
@@ -153,7 +154,8 @@ Si la pregunta es técnica o sobre configuración, contesta A. Si es sobre conce
 2. **TLS** protege la conexión y **DMARC** comprueba quién envía. Son cosas distintas.
 3. **SPF** dice qué IP puede enviar, **DKIM** es la firma y **DMARC** decide qué hacer si fallan.
 4. El buzón **no** está cifrado. Eso es una limitación conocida, no un error.
-5. Si no sabes una respuesta: «Eso lo configuró *(nombre de A)*, te lo explica».
+5. El **25** no se filtra por IP: en un servidor real también va abierto y lo que decide es **SPF/DKIM/DMARC** (y Rspamd).
+6. Si no sabes una respuesta: «Eso lo configuró *(nombre de A)*, te lo explica».
 
 ## Ensayo
 
