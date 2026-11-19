@@ -17,7 +17,7 @@
 
 > Buenos días. Nuestro taller fue montar **un servidor de correo seguro** para un dominio ficticio, `lab.test`, con dos usuarios: Ana y Pedro.
 >
-> Todo corre en contenedores Docker y usa tres puertos: **587 para enviar**, **993 para leer**, los dos cifrados con TLS, y **25 para recibir de otros servidores**, protegido con DMARC.
+> Todo corre en contenedores Docker y usa tres puertos: **587 para enviar**, **993 para leer**, los dos cifrados con TLS (Transport Layer Security), y **25 para recibir de otros servidores**, protegido con DMARC.
 >
 > A la derecha ven las cabeceras de un correo real de Ana a Pedro: viajó con **TLS 1.3** y lleva la **firma DKIM** de `lab.test`. Eso es lo que vamos a explicar. *(nombre de A)* les muestra cómo está armado.
 
@@ -27,19 +27,19 @@
 
 > Son dos PCs. El **PC 1 es el servidor**: ahí está Ana con su Thunderbird. El **PC 2** es Pedro, y también hace de atacante en las pruebas.
 >
-> Todo lo que entra al PC 1 pasa primero por un **firewall**. El **587** y el **993** se publican en la IP del PC 1; el **25** queda abierto a la **red del grupo** para recibir correo de otros equipos (en casa, solo en localhost).
+> Todo lo que entra al PC 1 pasa primero por un **firewall**. El **587** y el **993** se publican en la IP (Internet Protocol) del PC 1; el **25** queda abierto a la **red del grupo** para recibir correo de otros equipos (en casa, solo en localhost).
 
 `[clic]`
 
 > Detrás hay una red Docker. El contenedor principal es **mail-lab**:
 > - **Postfix** envía y recibe.
-> - **Dovecot** guarda los buzones y sirve el IMAP.
+> - **Dovecot** guarda los buzones y sirve el IMAP (Internet Message Access Protocol).
 > - Los buzones quedan en **texto en claro**; lo retomaremos en un momento.
 > - El servidor **no puede sacar correo a Internet**: está bloqueado por configuración y también por red.
 
 `[clic]`
 
-> Cada correo pasa por **Rspamd**, que verifica SPF, DKIM y DMARC y firma lo que sale. Para eso consulta nuestro **DNS propio** y le pide al **antivirus ClamAV** que revise los adjuntos. Si el antivirus no responde, el correo no entra.
+> Cada correo pasa por **Rspamd**, que verifica SPF (Sender Policy Framework), DKIM (DomainKeys Identified Mail) y DMARC (Domain-based Message Authentication, Reporting and Conformance) y firma lo que sale. Para eso consulta nuestro **DNS propio** (Domain Name System) y le pide al **antivirus ClamAV** que revise los adjuntos. Si el antivirus no responde, el correo no entra.
 >
 > *(nombre de B)* les explica qué protege cada tramo.
 
@@ -61,13 +61,13 @@
 
 ## 4 · Cifrado · A · 1:00 (acumulado 4:45)
 
-> Creamos **nuestra propia autoridad certificadora** y, con ella, un certificado **ECDSA P-256** para `mail.lab.test`. Exigimos **TLS 1.2 como mínimo**: el 1.0 y el 1.1 se rechazan.
+> Creamos **nuestra propia autoridad certificadora** y, con ella, un certificado **ECDSA P-256** (Elliptic Curve Digital Signature Algorithm) para `mail.lab.test`. Exigimos **TLS 1.2 como mínimo**: el 1.0 y el 1.1 se rechazan.
 >
 > Antes de dar una contraseña, el cliente comprueba el certificado.
 
 `[clic]`
 
-> **Verification: OK**: el certificado es de nuestra CA, y la conexión se negoció con **TLS 1.3**. Las contraseñas tampoco se guardan en texto plano, solo como hash SHA512-CRYPT.
+> **Verification: OK**: el certificado es de nuestra CA (autoridad certificadora), y la conexión se negoció con **TLS 1.3**. Las contraseñas tampoco se guardan en texto plano, solo como hash SHA512-CRYPT (Secure Hash Algorithm).
 
 `[clic]`
 
@@ -126,7 +126,7 @@
 > - **A**: certificados y versiones de TLS.
 > - **B**: sin TLS no se puede autenticar ni enviar.
 > - **C**: cada usuario solo puede enviar como él mismo.
-> - **D**: ataques de suplantación, SMTP smuggling, virus y fuerza bruta, todos rechazados.
+> - **D**: ataques de suplantación, SMTP (Simple Mail Transfer Protocol) smuggling, virus y fuerza bruta, todos rechazados.
 >
 > ¿Preguntas?
 
@@ -138,8 +138,8 @@ Si la pregunta es técnica o sobre configuración, contesta A. Si es sobre conce
 
 | Pregunta | Quién | Respuesta corta |
 |---|---|---|
-| ¿Por qué el buzón queda en claro? | B | TLS solo cifra el transporte. Para cifrar el contenido almacenado hace falta cifrado de extremo a extremo (S/MIME o PGP), que queda fuera del alcance del taller. |
-| ¿Por qué el 25 no está restringido por IP? | A | En un servidor real el 25 tiene que aceptar correo de cualquier MTA, y aquí se comporta igual: lo que decide si un correo entra es SPF/DKIM/DMARC y Rspamd, no la IP. En casa, además, solo escucha en localhost. |
+| ¿Por qué el buzón queda en claro? | B | TLS solo cifra el transporte. Para cifrar el contenido almacenado hace falta cifrado de extremo a extremo (S/MIME, Secure/Multipurpose Internet Mail Extensions, o PGP, Pretty Good Privacy), que queda fuera del alcance del taller. |
+| ¿Por qué el 25 no está restringido por IP? | A | En un servidor real el 25 tiene que aceptar correo de cualquier MTA (Mail Transfer Agent), y aquí se comporta igual: lo que decide si un correo entra es SPF/DKIM/DMARC y Rspamd, no la IP. En casa, además, solo escucha en localhost. |
 | ¿Qué pasa si se cae el antivirus? | A | El correo no se acepta: responde con un error temporal 451 y el cliente lo reintenta. Nunca entra correo sin analizar. |
 | ¿Qué es SMTP smuggling? | A | Esconder un segundo correo dentro de otro usando finales de línea raros. Postfix está configurado para normalizarlos y no aceptar comandos encadenados sin autenticar. |
 | ¿Y si Ana, ya autenticada, pone `From: pedro`? | A | Postfix ata el remitente técnico al usuario, y una regla propia de Rspamd ata el `From:` visible. Responde con un 554 de «suplantación interna». |
